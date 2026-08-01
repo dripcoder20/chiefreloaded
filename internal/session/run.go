@@ -50,6 +50,8 @@ type run struct {
 
 	provider *agentx.GroupLeader
 	sess     *Session
+	// req is kept so the goroutine can prepare its own workspace.
+	req StartRequest
 
 	mu       sync.Mutex
 	state    LoopState
@@ -117,10 +119,7 @@ func (s *Session) Start(ctx context.Context, req StartRequest) (string, error) {
 		return "", err
 	}
 
-	workDir := req.WorkDir
-	if workDir == "" {
-		workDir = root
-	}
+	_ = root
 
 	budget := req.AttemptBudget
 	if budget <= 0 {
@@ -132,16 +131,18 @@ func (s *Session) Start(ctx context.Context, req StartRequest) (string, error) {
 		id:       s.nextRunID(),
 		prdName:  req.PRD,
 		prdPath:  summary.Path,
-		workDir:  workDir,
+		req:      req,
 		provider: provider,
 		sess:     s,
-		state:    StateRunning,
-		budget:   budget,
-		started:  s.now(),
-		timings:  make(map[string]time.Duration),
-		cancel:   cancel,
-		pauseCh:  make(chan struct{}),
-		done:     make(chan struct{}),
+		// Deciding where to run may require a decision from the user, and that
+		// happens inside the run's goroutine so this call can return at once.
+		state:   StateAwaiting,
+		budget:  budget,
+		started: s.now(),
+		timings: make(map[string]time.Duration),
+		cancel:  cancel,
+		pauseCh: make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 
 	s.mu.Lock()
@@ -154,10 +155,30 @@ func (s *Session) Start(ctx context.Context, req StartRequest) (string, error) {
 	return r.id, nil
 }
 
-// loop drives stories until the PRD is finished, the budget runs out, or the
-// caller pauses or stops.
+// loop prepares the workspace and then drives stories until the PRD is
+// finished, the budget runs out, or the caller pauses or stops.
 func (r *run) loop(ctx context.Context) {
 	defer close(r.done)
+
+	// Branch safety happens here rather than in Start so that Start never
+	// blocks. In the GUI, Start is a bound method: blocking it would freeze the
+	// IPC call for as long as the dialog is on screen, and the frontend would
+	// have no run ID to attach the question to.
+	workDir, err := r.sess.prepareWorkspace(ctx, r.req, r.id)
+	if err != nil {
+		if ctx.Err() != nil || r.isStopped() {
+			r.finish(StateStopped, EvRunStopped, "", nil)
+			return
+		}
+		r.finish(StateError, EvRunError, err.Error(), errInfo(err, ""))
+		return
+	}
+
+	r.mu.Lock()
+	r.workDir = workDir
+	r.state = StateRunning
+	r.mu.Unlock()
+	r.sess.publish(Event{Kind: EvRunStarted, RunID: r.id, PRD: r.prdName, Run: ptr(r.snapshot())})
 
 	for {
 		if stop := r.awaitResume(ctx); stop {

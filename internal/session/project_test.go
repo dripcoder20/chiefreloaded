@@ -380,6 +380,7 @@ func newTestSession(t *testing.T) *Session {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.AutoAnswer(true)
 	// stop, not Close: these tests do not drain the channel, and a graceful close
 	// leaves the pump alive waiting for a reader that never arrives.
 	t.Cleanup(func() { s.bus.stop() })

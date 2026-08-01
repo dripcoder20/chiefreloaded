@@ -175,8 +175,8 @@ func (s *Session) Snapshot() Snapshot {
 		Runs:        make([]RunSnapshot, 0, len(s.runs)),
 		Questions:   make([]Question, 0, len(s.questions)),
 	}
-	for _, r := range s.runs {
-		snap.Runs = append(snap.Runs, *r)
+	for _, r := range s.runsLocked() {
+		snap.Runs = append(snap.Runs, r)
 	}
 	for _, q := range s.questions {
 		snap.Questions = append(snap.Questions, q)
@@ -376,9 +376,23 @@ func (s *Session) SaveConfig(cfg config.Config) error {
 func (s *Session) Runs() []RunSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.runsLocked()
+}
+
+// runsLocked builds the run list, reading live runs from the run itself.
+//
+// The stored copy is only refreshed on terminal transitions, so consulting it
+// for a running run reports whatever state it was in when it started. Reading
+// through to the live run means the answer cannot go stale, and no future
+// transition has to remember to write the map. Callers hold s.mu.
+func (s *Session) runsLocked() []RunSnapshot {
 	out := make([]RunSnapshot, 0, len(s.runs))
-	for _, r := range s.runs {
-		out = append(out, *r)
+	for id, stored := range s.runs {
+		if live, ok := s.live[id]; ok {
+			out = append(out, live.snapshot())
+			continue
+		}
+		out = append(out, *stored)
 	}
 	return out
 }

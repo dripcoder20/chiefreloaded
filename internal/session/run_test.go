@@ -317,6 +317,11 @@ func newTestSessionWith(t *testing.T, p *fakeagent.Provider) *Session {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Most tests init a repo on main, which is protected, so every Start would
+	// otherwise park waiting for a branch-safety answer. Taking the recommended
+	// option is what an unattended run does; TestStartAsksBeforeUsingAProtectedBranch
+	// covers the asking itself.
+	s.AutoAnswer(true)
 	t.Cleanup(func() { s.bus.stop() })
 	return s
 }
