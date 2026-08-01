@@ -16,6 +16,7 @@
   import Inspector from "./shell/Inspector.svelte";
   import StoryList from "./views/StoryList.svelte";
   import LogView from "./views/LogView.svelte";
+  import Settings from "./views/Settings.svelte";
 
   onMount(() => {
     void connect();
@@ -62,6 +63,9 @@
         break;
       case "t":
         app.view = app.view === "log" ? "stories" : "log";
+        break;
+      case ",":
+        app.view = app.view === "settings" ? "stories" : "settings";
         break;
       case "+":
       case "=":
@@ -174,10 +178,18 @@
           class:on={app.view === "log"}
           onclick={() => (app.view = "log")}>Log</button
         >
+        <button
+          role="tab"
+          aria-selected={app.view === "settings"}
+          class:on={app.view === "settings"}
+          onclick={() => (app.view = "settings")}>Settings</button
+        >
       </div>
 
       <div class="pane">
-        {#if !app.project || app.prds.length === 0}
+        {#if app.view === "settings"}
+          <Settings />
+        {:else if !app.project || app.prds.length === 0}
           <div class="blank">
             <p>
               {#if !app.project}
@@ -211,7 +223,7 @@
     {#if app.runningCount > 0}
       <span class="tnum">{app.runningCount} running</span>
     {/if}
-    <span class="keys">s start · p pause · x stop · t log · j/k move</span>
+    <span class="keys">s start · p pause · x stop · t log · , settings · j/k move</span>
   </footer>
 </div>
 

@@ -26,8 +26,8 @@ import type {
   Question,
   Answer,
   StorySnap,
+  Settings,
 } from "../../bindings/github.com/dripcoder/loop/internal/session/models";
-import type { LoopConfig } from "../../bindings/github.com/dripcoder/loop/internal/chief/config/models";
 import { mockApi, mockOnEvents, mockOnReady } from "./mock";
 
 export { EventKind, LoopState };
@@ -44,7 +44,7 @@ export type {
   Question,
   Answer,
   StorySnap,
-  LoopConfig,
+  Settings,
 };
 
 /** Event names the Go bridge emits. Kept in sync with main.go. */
@@ -110,8 +110,8 @@ const wailsApi = {
     pick: (): Promise<Project | null> => ProjectService.Pick(),
     current: (): Promise<Project | null> => ProjectService.Current(),
     environment: (): Promise<Environment> => ProjectService.Environment(),
-    getConfig: (): Promise<LoopConfig> => ProjectService.GetConfig(),
-    saveConfig: (cfg: LoopConfig): Promise<void> => ProjectService.SaveConfig(cfg),
+    getConfig: (): Promise<Settings> => ProjectService.GetConfig(),
+    saveConfig: (v: Settings): Promise<void> => ProjectService.SaveConfig(v),
     rescan: (): Promise<void> => ProjectService.Rescan(),
   },
   prd: {
@@ -135,9 +135,9 @@ const wailsApi = {
 };
 
 /**
- * Outside the Wails webview every call goes to the mock. That is what lets the
- * entire interface run under `npm run dev` with hot reload; the check is on
- * `window._wails`, so a shipped build can never take this path.
+ * Outside a real webview every call goes to the mock. That is what lets the
+ * entire interface run under `npm run dev` with hot reload; the check is for the
+ * platform's native bridge, so a shipped build can never take this path.
  */
 export const api = isDesktop ? wailsApi : (mockApi as unknown as typeof wailsApi);
 

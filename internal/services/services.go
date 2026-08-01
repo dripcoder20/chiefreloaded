@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dripcoder/loop/internal/chief/config"
 	"github.com/dripcoder/loop/internal/session"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -69,11 +68,11 @@ func (p *ProjectService) Current() *session.Project { return p.s.Project() }
 // requests are actually available.
 func (p *ProjectService) Environment() session.Environment { return p.s.Environment() }
 
-// GetConfig returns the project config, Loop's git block included.
-func (p *ProjectService) GetConfig() config.LoopConfig { return p.s.LoopConfig() }
+// GetConfig returns the project settings.
+func (p *ProjectService) GetConfig() session.Settings { return p.s.Settings() }
 
-// SaveConfig writes the project config.
-func (p *ProjectService) SaveConfig(cfg config.LoopConfig) error { return p.s.SaveLoopConfig(cfg) }
+// SaveConfig writes the project settings.
+func (p *ProjectService) SaveConfig(v session.Settings) error { return p.s.SaveSettings(v) }
 
 // Rescan re-reads the PRDs from disk.
 func (p *ProjectService) Rescan() error { return p.s.Rescan(context.Background()) }

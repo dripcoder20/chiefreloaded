@@ -4,7 +4,7 @@ import {
   EventKind,
   onEvents,
   onReady,
-  type LoopConfig,
+  type Settings,
   type LoopEvent,
   type PRDDetail,
   type PRDSummary,
@@ -30,7 +30,7 @@ class AppState {
   prds = $state<PRDSummary[]>([]);
   runs = $state<RunSnapshot[]>([]);
   questions = $state<Question[]>([]);
-  config = $state<LoopConfig | null>(null);
+  config = $state<Settings | null>(null);
 
   selectedPrd = $state<string | null>(null);
   selectedStory = $state<string | null>(null);
