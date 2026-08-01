@@ -1,7 +1,9 @@
 package session
 
 import (
+	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
@@ -202,13 +204,23 @@ func resolveCost(u *chiefloop.Usage) *float64 {
 }
 
 // usageLedger owns the session's usage records. It assigns stable keys,
-// deduplicates on submission, and answers report queries. Safe for concurrent
-// use: several runs record into it at once.
+// deduplicates on submission, persists every change, and answers report queries.
+// Safe for concurrent use: several runs record into it at once.
+//
+// Persistence happens inside add under the same lock that appends the record, so
+// concurrent updates serialize and the last write to reach disk is always the
+// most complete one — a slower goroutine can never clobber the file with a stale
+// subset of the records.
 type usageLedger struct {
 	mu       sync.Mutex
 	seen     map[string]struct{}
 	records  []UsageRecord
 	counters map[string]int // per attempt scope, for stable key assignment
+
+	// store persists records to the open project's .chief/. Nil before a project
+	// is open (and in pure unit tests), where the ledger is in-memory only.
+	store *usageStore
+	log   *slog.Logger
 }
 
 func newUsageLedger() *usageLedger {
@@ -229,8 +241,10 @@ func (l *usageLedger) nextKey(scope string) string {
 	return scope + ":" + strconv.Itoa(i)
 }
 
-// add records a usage record, ignoring a key already seen. The bool reports
-// whether the record was newly counted.
+// add records a usage record, ignoring a key already seen, and persists the new
+// history. The bool reports whether the record was newly counted. A persistence
+// failure is logged rather than returned: the in-memory total is already correct
+// and the next successful write recovers the file.
 func (l *usageLedger) add(rec UsageRecord) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -239,7 +253,19 @@ func (l *usageLedger) add(rec UsageRecord) bool {
 	}
 	l.seen[rec.Key] = struct{}{}
 	l.records = append(l.records, rec)
+	l.persistLocked()
 	return true
+}
+
+// persistLocked writes the current records through the store, if one is attached.
+// Callers hold l.mu.
+func (l *usageLedger) persistLocked() {
+	if l.store == nil {
+		return
+	}
+	if err := l.store.save(l.records); err != nil && l.log != nil {
+		l.log.Warn("persist usage history", "error", err)
+	}
 }
 
 // report returns the absolute cumulative roll-up across every recorded usage.
@@ -249,14 +275,47 @@ func (l *usageLedger) report() UsageReport {
 	return buildReport(l.records)
 }
 
-// reset clears every record and key. Opening a new project starts its usage
-// totals from zero without replacing the ledger a live run may still hold.
-func (l *usageLedger) reset() {
+// open points the ledger at a project's store and loads its persisted history in
+// place, replacing whatever the previous project left behind. Reset-and-load in
+// place (rather than allocating a new ledger) means a live run goroutine still
+// holding this pointer keeps writing into the same object.
+//
+// Key counters are restored from the loaded keys so freshly assigned keys pick up
+// after the persisted ones instead of colliding with them.
+func (l *usageLedger) open(store *usageStore, records []UsageRecord, log *slog.Logger) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.seen = make(map[string]struct{})
+	l.store = store
+	l.log = log
+	l.seen = make(map[string]struct{}, len(records))
 	l.records = nil
 	l.counters = make(map[string]int)
+	for _, rec := range records {
+		if _, ok := l.seen[rec.Key]; ok {
+			continue
+		}
+		l.seen[rec.Key] = struct{}{}
+		l.records = append(l.records, rec)
+		l.restoreCounterLocked(rec.Key)
+	}
+}
+
+// restoreCounterLocked advances the per-scope key counter past a loaded key, so
+// the next assigned key for that scope does not reuse an existing one. Keys are
+// "<scope>:<index>"; a key that does not fit that shape is left alone. Callers
+// hold l.mu.
+func (l *usageLedger) restoreCounterLocked(key string) {
+	sep := strings.LastIndex(key, ":")
+	if sep < 0 {
+		return
+	}
+	index, err := strconv.Atoi(key[sep+1:])
+	if err != nil {
+		return
+	}
+	if scope := key[:sep]; index+1 > l.counters[scope] {
+		l.counters[scope] = index + 1
+	}
 }
 
 func valueOrZero(p *int64) int64 {

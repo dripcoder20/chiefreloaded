@@ -83,6 +83,10 @@ const (
 	// cumulative roll-up, so it is never dropped under pressure.
 	EvUsage EventKind = "usage"
 
+	// EvUsageError reports that persisted usage history could not be loaded. The
+	// totals start empty; the PRD list and run controls stay usable.
+	EvUsageError EventKind = "usage.error"
+
 	// Agent output. These are the high-volume kinds and the only ones the bus is
 	// allowed to drop under pressure.
 	EvAgentText       EventKind = "agent.text"
