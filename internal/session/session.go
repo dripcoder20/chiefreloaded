@@ -25,7 +25,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dripcoder/loop/internal/chief/agent"
 	"github.com/dripcoder/loop/internal/chief/config"
+	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
 )
 
 // Options configures a Session. The zero value is usable.
@@ -42,6 +44,9 @@ type Options struct {
 	// behaviour in environments the test machine does not have — no gh, no
 	// gh-stack, an unauthenticated gh.
 	Probe func(context.Context) Environment
+	// Provider overrides agent resolution entirely. Tests inject a scripted
+	// agent here; production leaves it nil and resolves from config.
+	Provider chiefloop.Provider
 }
 
 // Session is a single opened project and everything running against it.
@@ -54,12 +59,21 @@ type Session struct {
 	now  func() time.Time
 	bus  *bus
 
-	mu        sync.RWMutex
-	project   *Project
-	cfg       *config.Config
-	prds      []PRDSummary
-	env       Environment
+	mu      sync.RWMutex
+	project *Project
+	// cfg is chief's view of the config; loopCfg is the same file including
+	// Loop's own git block. Both are kept so Config() stays byte-compatible with
+	// what the chief TUI would write.
+	cfg     *config.Config
+	loopCfg *config.LoopConfig
+	prds    []PRDSummary
+	env     Environment
+	// runs holds a snapshot per run, including finished ones, so the UI can still
+	// render a completed run's summary. live holds only those with a goroutine
+	// attached and is what the control methods operate on.
 	runs      map[string]*RunSnapshot
+	live      map[string]*run
+	runSeq    int
 	questions map[QuestionID]Question
 
 	closeOnce sync.Once
@@ -83,8 +97,43 @@ func New(opts Options) (*Session, error) {
 		now:       opts.Clock,
 		bus:       newBus(opts.EventBuffer, opts.Clock),
 		runs:      make(map[string]*RunSnapshot),
+		live:      make(map[string]*run),
 		questions: make(map[QuestionID]Question),
 	}, nil
+}
+
+// publish puts an event on the session's stream. Never blocks.
+func (s *Session) publish(ev Event) { s.bus.publish(ev) }
+
+// resolveProvider picks the agent CLI: explicit override, then config, then
+// chief's own resolution order (flag, CHIEF_AGENT, config, claude).
+//
+// The provider is verified to be on PATH here rather than at first use. A
+// missing CLI discovered mid-run looks like the agent silently doing nothing,
+// which is a miserable thing to debug.
+func (s *Session) resolveProvider(override string) (chiefloop.Provider, error) {
+	if s.opts.Provider != nil {
+		return s.opts.Provider, nil
+	}
+
+	cfg := s.Config()
+	p, err := agent.Resolve(override, "", &cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := agent.CheckInstalled(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// afterStoryDone is the per-story git hook: push the branch, open its draft PR,
+// and cut the next one. Implemented in stack.go; a no-op when stacking is off.
+//
+// It runs after the status write and after the agent process has exited, which
+// is what makes touching git safe at all.
+func (s *Session) afterStoryDone(ctx context.Context, r *run, storyID, title string, check CommitCheck) error {
+	return s.stackAfterStory(ctx, r, storyID, title, check)
 }
 
 // Events is the session's single ordered event stream. It is closed by Close.
@@ -138,10 +187,11 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 		return Project{}, err
 	}
 
-	cfg, err := config.Load(project.Root)
+	loopCfg, err := config.LoadLoop(project.Root)
 	if err != nil {
 		return Project{}, fmt.Errorf("load .chief/config.yaml: %w", err)
 	}
+	cfg := &loopCfg.Config
 
 	env := s.opts.Probe(ctx)
 	prds := discoverPRDs(project.Root)
@@ -149,10 +199,12 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 	s.mu.Lock()
 	s.project = &project
 	s.cfg = cfg
+	s.loopCfg = loopCfg
 	s.env = env
 	s.prds = prds
 	// Runs and questions belong to the previous project.
 	s.runs = make(map[string]*RunSnapshot)
+	s.live = make(map[string]*run)
 	s.questions = make(map[QuestionID]Question)
 	s.mu.Unlock()
 
@@ -239,6 +291,41 @@ func (s *Session) Rescan(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.bus.publish(Event{Kind: EvPRDChanged})
+	return nil
+}
+
+// LoopConfig returns the project config including Loop's own git block.
+func (s *Session) LoopConfig() config.LoopConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loopCfgLocked()
+}
+
+func (s *Session) loopCfgLocked() config.LoopConfig {
+	if s.loopCfg == nil {
+		return *config.DefaultLoop()
+	}
+	return *s.loopCfg
+}
+
+// SaveLoopConfig writes the project config including Loop's git block.
+func (s *Session) SaveLoopConfig(cfg config.LoopConfig) error {
+	root, err := s.requireProject()
+	if err != nil {
+		return err
+	}
+	cfg.Normalise()
+	if err := config.SaveLoop(root, &cfg); err != nil {
+		return fmt.Errorf("save .chief/config.yaml: %w", err)
+	}
+
+	s.mu.Lock()
+	s.loopCfg = &cfg
+	base := cfg.Config
+	s.cfg = &base
+	s.mu.Unlock()
+
+	s.publish(Event{Kind: EvConfigChanged})
 	return nil
 }
 
