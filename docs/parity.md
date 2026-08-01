@@ -35,8 +35,8 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 | Branch safety decision | `app.go:726`, `1092` | done | Now data (`Question`), not keystroke handling. Unit-tested. |
 | Worktree provisioning | `app.go:1627` | done | Output streamed and genuinely cancellable; chief's `CombinedOutput` is neither. |
 | Per-PRD push / PR | `app.go:1310` | todo | Config keys exist and migrate; the action is not wired. |
-| **Per-story stacked PRs** | — | done | New. `gh stack` with a manual `gh pr create --draft --base` fallback. |
-| Merge branch | `picker.go` | todo | |
+| **Per-story stacked PRs** | — | done | New. `gh stack` with a manual `gh pr create --draft --base` fallback. Verified against real GitHub: 3 stories → 3 stacked drafts, and merging the bottom auto-retargets the next onto trunk. |
+| Merge branch | `picker.go` | todo | Must use `gh stack merge`; GitHub rejects `gh pr merge` on a stacked PR. |
 | Clean worktree | `picker.go` | todo | |
 | Orphaned worktree detection | `git.DetectOrphanedWorktrees` | todo | |
 

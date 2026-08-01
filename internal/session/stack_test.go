@@ -83,6 +83,7 @@ func TestResolveRemoteBaseFallsBackToTrunk(t *testing.T) {
 
 	st := &stackState{
 		cfg:   config.GitConfig{BaseBranch: "main"},
+		trunk: "main",
 		bases: map[string]string{},
 		prs:   map[string]PRRef{},
 	}
@@ -101,7 +102,7 @@ func TestResolveRemoteBaseLeavesTrunkAlone(t *testing.T) {
 	root := t.TempDir()
 	gitInit(t, root)
 
-	st := &stackState{cfg: config.GitConfig{BaseBranch: "main"}}
+	st := &stackState{cfg: config.GitConfig{BaseBranch: "main"}, trunk: "main"}
 	base, deviated := st.resolveRemoteBase(context.Background(), root, "main")
 	if deviated || base != "main" {
 		t.Errorf("trunk should never be reported as deviated; got %q deviated=%v", base, deviated)

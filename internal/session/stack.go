@@ -84,38 +84,61 @@ func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title st
 		})
 	}
 
-	return st.startNextBranch(ctx, s, r, branch)
+	// The next story's branch is created when that story starts, not here, so
+	// there is one place that guarantees "HEAD is this story's branch". All that
+	// is needed now is to remember what it will stack on.
+	if nextID, _ := nextIncompleteStory(r.prdPath); nextID != "" {
+		st.setBase(nextID, branch)
+	}
+	return nil
 }
 
-// startNextBranch creates the branch for whatever story comes next, on top of
-// the one just completed.
-func (st *stackState) startNextBranch(ctx context.Context, s *Session, r *run, previous string) error {
-	nextID, nextTitle := nextIncompleteStory(r.prdPath)
-	if nextID == "" {
-		return nil // the PRD is finished; nothing left to stack
+// ensureStoryBranch puts the worktree on the branch this story belongs to.
+//
+// This is the invariant the whole feature rests on: when the agent starts, HEAD
+// is already the branch its commit should land on. Creating branches after the
+// fact instead would mean the first story has nowhere to go — which is exactly
+// what happened before this existed, and the stack driver rejected every
+// command because no stack had been created.
+func (s *Session) ensureStoryBranch(ctx context.Context, r *run, storyID, title string) error {
+	if !s.LoopConfig().PerStory() {
+		return nil
 	}
 
-	branch := st.branchFor(nextID, nextTitle)
-	st.setBase(nextID, previous)
+	st := s.stackState(r)
+	branch := st.branchFor(storyID, title)
+	if currentBranch(ctx, r.workDir) == branch {
+		return nil
+	}
+
+	if !st.initialised {
+		// The bottom of the stack. `gh stack init` adopts the branch if it
+		// already exists and creates it otherwise, so a resumed run is fine.
+		if err := st.driver.Init(ctx, r.workDir, st.trunk, branch); err != nil {
+			return fmt.Errorf("start the stack at %s: %w", branch, err)
+		}
+		st.initialised = true
+		st.setBase(storyID, st.trunk)
+		s.publish(Event{
+			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
+			Git: &GitEvent{Op: "stack", Branch: branch, BaseBranch: st.trunk, State: "ok"},
+		})
+		return nil
+	}
 
 	if exists, _ := branchExists(ctx, r.workDir, branch); exists {
-		// Resuming onto a branch we created earlier. Only safe when it has not
-		// diverged from where we are now.
-		if fastForwardable(ctx, r.workDir, branch) {
-			if err := gitRun(ctx, r.workDir, "checkout", branch); err != nil {
-				return fmt.Errorf("checkout existing branch %s: %w", branch, err)
-			}
-			return nil
+		if !fastForwardable(ctx, r.workDir, branch) {
+			return fmt.Errorf("branch %s already exists and has diverged; resolve it before continuing", branch)
 		}
-		return fmt.Errorf("branch %s already exists and has diverged; resolve it before continuing", branch)
+		return gitRun(ctx, r.workDir, "checkout", branch)
 	}
 
 	if err := st.driver.AddBranch(ctx, r.workDir, branch); err != nil {
 		return fmt.Errorf("create branch %s: %w", branch, err)
 	}
 	s.publish(Event{
-		Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: nextID,
-		Git: &GitEvent{Op: "branch", Branch: branch, BaseBranch: previous, State: "ok"},
+		Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
+		Git: &GitEvent{Op: "branch", Branch: branch, BaseBranch: st.baseFor(storyID), State: "ok"},
 	})
 	return nil
 }
@@ -294,6 +317,12 @@ type stackState struct {
 	driver ghstack.Driver
 	cfg    config.GitConfig
 	prd    string
+	// trunk is what the bottom of the stack targets: the configured base branch
+	// or the repository's default.
+	trunk string
+	// initialised records whether `gh stack init` has run. The driver refuses
+	// every other command until a stack exists, so this cannot be skipped.
+	initialised bool
 
 	bases map[string]string // storyID -> the branch below it
 	prs   map[string]PRRef
@@ -304,10 +333,18 @@ func (s *Session) stackState(r *run) *stackState {
 	defer s.mu.Unlock()
 	if r.stack == nil {
 		cfg := s.loopCfgLocked()
+		trunk := cfg.Git.BaseBranch
+		if trunk == "" && s.project != nil {
+			trunk = s.project.DefaultBase
+		}
+		if trunk == "" {
+			trunk = "main"
+		}
 		r.stack = &stackState{
 			driver: ghstack.Select(context.Background(), string(cfg.Git.StackDriver)),
 			cfg:    cfg.Git,
 			prd:    r.prdName,
+			trunk:  trunk,
 			bases:  make(map[string]string),
 			prs:    make(map[string]PRRef),
 		}
@@ -323,10 +360,7 @@ func (st *stackState) baseFor(storyID string) string {
 	if b, ok := st.bases[storyID]; ok && b != "" {
 		return b
 	}
-	if st.cfg.BaseBranch != "" {
-		return st.cfg.BaseBranch
-	}
-	return "main"
+	return st.trunk
 }
 
 func (st *stackState) setBase(storyID, base string) { st.bases[storyID] = base }
@@ -341,12 +375,8 @@ func (st *stackState) recordPR(storyID, branch string, pr ghstack.PR) {
 // resolveRemoteBase walks down the stack to the nearest base that exists on the
 // remote, so one failed push does not cascade into every later pull request.
 func (st *stackState) resolveRemoteBase(ctx context.Context, dir, base string) (string, bool) {
-	trunk := st.cfg.BaseBranch
-	if trunk == "" {
-		trunk = "main"
-	}
-	if base == trunk || ghstack.RemoteBranchExists(ctx, dir, base) {
+	if base == st.trunk || ghstack.RemoteBranchExists(ctx, dir, base) {
 		return base, false
 	}
-	return trunk, true
+	return st.trunk, true
 }

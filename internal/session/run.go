@@ -231,6 +231,12 @@ func (r *run) runOneStory(ctx context.Context) (outcome, error) {
 		return outcomeProgressed, chiefloop.ErrAllStoriesComplete
 	}
 
+	// Put the worktree on this story's branch before anything else, so the
+	// agent's commit lands where the pull request will be opened from.
+	if err := r.sess.ensureStoryBranch(ctx, r, storyID, storyTitle); err != nil {
+		return outcomeProgressed, err
+	}
+
 	headBefore := revParseHead(ctx, r.workDir)
 	branchBefore := currentBranch(ctx, r.workDir)
 

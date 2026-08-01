@@ -10,8 +10,19 @@
 //     branch topology and the same review experience per PR, minus the native
 //     stack object and its auto-retargeting.
 //
-// Manual is not vestigial. `gh stack` is a preview feature two days old at time
-// of writing and may not be installed; the fallback has to stay tested.
+// Manual is not vestigial. `gh stack` is a preview feature days old at time of
+// writing and may not be installed; the fallback has to stay tested.
+//
+// Verified against real GitHub: three stories produce three draft pull requests
+// stacked bottom-up, and merging the bottom one retargets the next onto the
+// trunk automatically. Two constraints found doing that, both of which will bite
+// anyone extending this:
+//
+//   - `gh pr merge` refuses a stacked pull request outright: GitHub requires the
+//     asynchronous merge API. Use `gh stack merge`, not `gh pr merge`.
+//   - `gh pr edit` fails on gh 2.68 regardless of arguments, because it queries
+//     projectCards, a field removed with Projects (classic). Titles and bodies go
+//     through the REST API instead — see editPR.
 package ghstack
 
 import (
@@ -20,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -129,13 +141,23 @@ func (d GH) Submit(ctx context.Context, s Spec) (PR, error) {
 		return PR{}, fmt.Errorf("gh stack submit reported success but no pull request exists for %s", s.Head)
 	}
 
-	if err := editPR(ctx, s); err != nil {
+	if err := editPR(ctx, s.Dir, pr.Number, s.Title, s.Body); err != nil {
 		// The PR exists and is stacked correctly; only its prose is wrong. That
 		// is not worth failing the story over.
 		return pr, fmt.Errorf("pull request #%d created, but updating its title and body failed: %w", pr.Number, err)
 	}
 	pr.Base, pr.Head = s.Base, s.Head
 	return pr, nil
+}
+
+// Merge merges a pull request and everything below it in the stack.
+//
+// Through `gh stack merge` because plain `gh pr merge` is rejected for stacked
+// pull requests — GitHub requires the asynchronous merge API, and the extension
+// is what speaks it.
+func (GH) Merge(ctx context.Context, dir string, number int) error {
+	_, err := run(ctx, dir, "gh", "stack", "merge", strconv.Itoa(number), "--yes")
+	return err
 }
 
 // AddBranch puts the next story's branch on top of the stack.
@@ -185,7 +207,7 @@ func (Manual) Submit(ctx context.Context, s Spec) (PR, error) {
 			return existing, fmt.Errorf("pull request #%d for %s is %s; not reopening",
 				existing.Number, s.Head, strings.ToLower(existing.State))
 		}
-		if err := editPR(ctx, s); err != nil {
+		if err := editPR(ctx, s.Dir, existing.Number, s.Title, s.Body); err != nil {
 			return existing, err
 		}
 		existing.Base, existing.Head = s.Base, s.Head
@@ -251,9 +273,24 @@ func findPR(ctx context.Context, dir, head string) (PR, bool, error) {
 	}, true, nil
 }
 
-func editPR(ctx context.Context, s Spec) error {
-	_, err := runStdin(ctx, s.Dir, s.Body, "gh", "pr", "edit", s.Head,
-		"--title", s.Title, "--body-file", "-")
+// editPR sets a pull request's title and body.
+//
+// Through the REST API rather than `gh pr edit`, which unconditionally queries
+// projectCards — a field GitHub removed with Projects (classic). On gh 2.68 that
+// makes every `gh pr edit` fail regardless of the arguments, so the PR would be
+// opened correctly and then left with an auto-generated title. PATCH on the
+// pulls endpoint touches none of that and behaves the same across gh versions.
+func editPR(ctx context.Context, dir string, number int, title, body string) error {
+	payload, err := json.Marshal(map[string]string{"title": title, "body": body})
+	if err != nil {
+		return err
+	}
+	// The body arrives on stdin: it contains newlines and backticks and can
+	// exceed ARG_MAX on a long story.
+	_, err = runStdin(ctx, dir, string(payload), "gh", "api",
+		"--method", "PATCH",
+		"repos/{owner}/{repo}/pulls/"+strconv.Itoa(number),
+		"--input", "-")
 	return err
 }
 
