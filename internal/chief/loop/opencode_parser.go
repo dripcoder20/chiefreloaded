@@ -23,8 +23,8 @@ type opencodePart struct {
 	Reason   string          `json:"reason,omitempty"`
 	Snapshot string          `json:"snapshot,omitempty"`
 	State    *opencodeState  `json:"state,omitempty"`
-	Tokens   *opencodeTokens `json:"tokens,omitempty"`
-	Cost     float64         `json:"cost,omitempty"`
+	Tokens   json.RawMessage `json:"tokens,omitempty"`
+	Cost     *float64        `json:"cost,omitempty"`
 }
 
 type opencodeState struct {
@@ -40,16 +40,18 @@ type opencodeTime struct {
 	End   int64 `json:"end"`
 }
 
+// opencodeTokens mirrors the token fields OpenCode reports. Pointer fields keep a
+// missing field distinct from a reported value of 0.
 type opencodeTokens struct {
-	Input     int                  `json:"input"`
-	Output    int                  `json:"output"`
-	Reasoning int                  `json:"reasoning"`
+	Input     *int64               `json:"input"`
+	Output    *int64               `json:"output"`
+	Reasoning *int64               `json:"reasoning"`
 	Cache     *opencodeCacheTokens `json:"cache,omitempty"`
 }
 
 type opencodeCacheTokens struct {
-	Read  int `json:"read"`
-	Write int `json:"write"`
+	Read  *int64 `json:"read"`
+	Write *int64 `json:"write"`
 }
 
 type opencodeError struct {
@@ -113,10 +115,17 @@ func ParseLineOpenCode(line string) *Event {
 		if ev.Part == nil {
 			return nil
 		}
-		if ev.Part.Reason == "stop" {
-			return &Event{Type: EventComplete}
+		usage, err := extractOpenCodeUsage(ev.Part)
+		if err != nil {
+			return warningEvent("opencode", err)
 		}
-		return nil
+		if ev.Part.Reason == "stop" {
+			return &Event{Type: EventComplete, Usage: usage}
+		}
+		if usage == nil {
+			return nil
+		}
+		return &Event{Type: EventUsage, Usage: usage}
 
 	case "error":
 		msg := "unknown error"
@@ -133,4 +142,24 @@ func ParseLineOpenCode(line string) *Event {
 	default:
 		return nil
 	}
+}
+
+// extractOpenCodeUsage normalizes the tokens and cost reported on a step_finish
+// part. It returns an error only when the tokens object is present but malformed.
+func extractOpenCodeUsage(part *opencodePart) (*Usage, error) {
+	u := &Usage{ReportedCost: part.Cost}
+	if len(part.Tokens) > 0 && string(part.Tokens) != "null" {
+		var raw opencodeTokens
+		if err := json.Unmarshal(part.Tokens, &raw); err != nil {
+			return nil, err
+		}
+		u.InputTokens = raw.Input
+		u.OutputTokens = raw.Output
+		u.ReasoningTokens = raw.Reasoning
+		if raw.Cache != nil {
+			u.CacheReadTokens = raw.Cache.Read
+			u.CacheWriteTokens = raw.Cache.Write
+		}
+	}
+	return finalizeUsage(u)
 }

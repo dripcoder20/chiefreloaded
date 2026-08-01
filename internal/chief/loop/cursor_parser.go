@@ -180,12 +180,32 @@ func ParseLineCursor(line string) *Event {
 	case "tool_call":
 		return parseCursorToolCall(ev.Subtype, ev.ToolCall)
 
-	case "user", "result":
+	case "result":
+		return parseCursorResult(line)
+
+	case "user":
 		return nil
 
 	default:
 		return nil
 	}
+}
+
+// parseCursorResult extracts usage and cost from a Cursor result line, which
+// mirrors Claude's usage shape (input/output/cache tokens and total_cost_usd).
+func parseCursorResult(line string) *Event {
+	var meta claudeResultMeta
+	if err := json.Unmarshal([]byte(line), &meta); err != nil {
+		return nil
+	}
+	usage, err := claudeUsageFrom(meta.Usage, meta.Model, meta.TotalCostUSD)
+	if err != nil {
+		return warningEvent("cursor", err)
+	}
+	if usage == nil {
+		return nil
+	}
+	return &Event{Type: EventUsage, Usage: usage}
 }
 
 func parseCursorAssistantMessage(raw json.RawMessage) *Event {

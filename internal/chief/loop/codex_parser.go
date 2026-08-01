@@ -14,6 +14,15 @@ type codexEvent struct {
 	Error   *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+	Usage json.RawMessage `json:"usage,omitempty"` // present on turn.completed
+}
+
+// codexUsageRaw mirrors the token fields Codex reports in a turn.completed usage
+// object. Pointer fields keep a missing field distinct from a reported 0.
+type codexUsageRaw struct {
+	InputTokens       *int64 `json:"input_tokens"`
+	CachedInputTokens *int64 `json:"cached_input_tokens"`
+	OutputTokens      *int64 `json:"output_tokens"`
 }
 
 // codexItem represents an item in item.started / item.completed / item.updated events.
@@ -116,10 +125,32 @@ func ParseLineCodex(line string) *Event {
 		return nil
 
 	case "turn.completed":
-		// Usage info only, no event
-		return nil
+		return parseCodexUsage(ev.Usage)
 
 	default:
 		return nil
 	}
+}
+
+// parseCodexUsage normalizes a Codex turn.completed usage object into an event.
+func parseCodexUsage(rawUsage json.RawMessage) *Event {
+	if len(rawUsage) == 0 || string(rawUsage) == "null" {
+		return nil
+	}
+	var raw codexUsageRaw
+	if err := json.Unmarshal(rawUsage, &raw); err != nil {
+		return warningEvent("codex", err)
+	}
+	usage, err := finalizeUsage(&Usage{
+		InputTokens:     raw.InputTokens,
+		OutputTokens:    raw.OutputTokens,
+		CacheReadTokens: raw.CachedInputTokens,
+	})
+	if err != nil {
+		return warningEvent("codex", err)
+	}
+	if usage == nil {
+		return nil
+	}
+	return &Event{Type: EventUsage, Usage: usage}
 }
