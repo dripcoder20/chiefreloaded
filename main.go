@@ -47,6 +47,12 @@ const (
 const (
 	eventBatch = "loop:events"
 	eventReady = "loop:ready"
+
+	// Authoring terminal output has its own channel. It is high-volume, binary
+	// and interesting to exactly one component; putting it on the ordered
+	// firehose would evict real events from the retention ring for no benefit.
+	eventAuthor     = "loop:author"
+	eventAuthorExit = "loop:author:exit"
 )
 
 // Batching parameters for the firehose.
@@ -59,6 +65,16 @@ const (
 	flushInterval = 50 * time.Millisecond
 	flushSize     = 256
 )
+
+// init registers the event payload types.
+//
+// Events do not appear in any bound method signature, so the binding generator
+// has no other way to learn their shape — without this the frontend would be
+// hand-writing interfaces that silently drift from the Go structs.
+func init() {
+	application.RegisterEvent[session.AuthorEvent](eventAuthor)
+	application.RegisterEvent[session.AuthorExit](eventAuthorExit)
+}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -75,6 +91,7 @@ func main() {
 			application.NewService(services.NewProject(sess)),
 			application.NewService(services.NewPRD(sess)),
 			application.NewService(services.NewRun(sess)),
+			application.NewService(services.NewAuthoring(sess)),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -101,6 +118,11 @@ func main() {
 		BackgroundColour: application.NewRGB(23, 24, 28),
 		URL:              "/",
 	})
+
+	sess.SetAuthoringSinks(
+		func(ev session.AuthorEvent) { app.Event.Emit(eventAuthor, ev) },
+		func(ev session.AuthorExit) { app.Event.Emit(eventAuthorExit, ev) },
+	)
 
 	go bridgeEvents(app, sess)
 	openWorkingDirectory(sess, logger)

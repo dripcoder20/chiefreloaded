@@ -17,6 +17,7 @@
   import StoryList from "./views/StoryList.svelte";
   import LogView from "./views/LogView.svelte";
   import Settings from "./views/Settings.svelte";
+  import AuthorPane from "./views/AuthorPane.svelte";
 
   onMount(() => {
     void connect();
@@ -66,6 +67,9 @@
         break;
       case ",":
         app.view = app.view === "settings" ? "stories" : "settings";
+        break;
+      case "n":
+        app.view = app.view === "author" ? "stories" : "author";
         break;
       case "+":
       case "=":
@@ -180,6 +184,12 @@
         >
         <button
           role="tab"
+          aria-selected={app.view === "author"}
+          class:on={app.view === "author"}
+          onclick={() => (app.view = "author")}>New PRD</button
+        >
+        <button
+          role="tab"
           aria-selected={app.view === "settings"}
           class:on={app.view === "settings"}
           onclick={() => (app.view = "settings")}>Settings</button
@@ -189,6 +199,8 @@
       <div class="pane">
         {#if app.view === "settings"}
           <Settings />
+        {:else if app.view === "author"}
+          <AuthorPane />
         {:else if !app.project || app.prds.length === 0}
           <div class="blank">
             <p>
@@ -201,10 +213,12 @@
               {/if}
             </p>
             <p class="hint">
-              Loop opens the directory it was launched from. Create a PRD with
-              <code>chief new</code>, or choose a different project.
+              Loop opens the directory it was launched from.
             </p>
-            <button onclick={pickProject}>Choose a project…</button>
+            <div class="blank-actions">
+              <button class="primary" onclick={() => (app.view = "author")}>Create a PRD</button>
+              <button onclick={pickProject}>Choose a project…</button>
+            </div>
           </div>
         {:else if app.view === "stories"}
           <StoryList />
@@ -223,7 +237,7 @@
     {#if app.runningCount > 0}
       <span class="tnum">{app.runningCount} running</span>
     {/if}
-    <span class="keys">s start · p pause · x stop · t log · , settings · j/k move</span>
+    <span class="keys">s start · p pause · x stop · t log · n new PRD · , settings · j/k move</span>
   </footer>
 </div>
 
@@ -424,6 +438,15 @@
   .blank .hint {
     font-size: 12px;
   }
+  .blank-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .blank-actions .primary {
+    border-color: var(--accent);
+    color: var(--fg-1);
+  }
+
   .blank code {
     font-family: var(--font-mono);
     background: var(--bg-raised);

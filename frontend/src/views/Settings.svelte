@@ -1,6 +1,9 @@
 <script lang="ts">
   import { api, type Settings } from "../platform";
   import { app } from "../stores/app.svelte";
+  import PromptEditor from "./PromptEditor.svelte";
+
+  let promptKind = $state<"new" | "edit">("new");
 
   /**
    * chief's settings screen exposes three fields and hides the agent provider
@@ -136,6 +139,23 @@
       </p>
     </section>
 
+    <section class="wide">
+      <h3>PRD prompt</h3>
+      <p class="lead">
+        The brief the agent receives when writing a PRD. Put your own conventions or
+        slash commands here and they apply to every PRD you create.
+      </p>
+      <div class="kinds">
+        <button class:on={promptKind === "new"} onclick={() => (promptKind = "new")}>
+          Creating
+        </button>
+        <button class:on={promptKind === "edit"} onclick={() => (promptKind = "edit")}>
+          Editing
+        </button>
+      </div>
+      <PromptEditor kind={promptKind} />
+    </section>
+
     <section>
       <h3>Worktree</h3>
       <label class="row">
@@ -168,6 +188,39 @@
     overflow-y: auto;
     padding: 16px 18px;
     max-width: 640px;
+  }
+
+  /* The prompt editor needs room to read as a document rather than a field. */
+  section.wide {
+    max-width: none;
+    margin-right: -18px;
+    padding-right: 18px;
+  }
+
+  .lead {
+    margin: -4px 0 10px;
+    font-size: 12px;
+    color: var(--fg-3);
+    max-width: 68ch;
+  }
+
+  .kinds {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .kinds button {
+    padding: 3px 10px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--fg-3);
+    font: inherit;
+    cursor: default;
+  }
+  .kinds button.on {
+    color: var(--fg-1);
+    border-color: var(--accent);
   }
 
   section {

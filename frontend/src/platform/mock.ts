@@ -170,6 +170,60 @@ setInterval(() => {
   tick++;
 }, 900);
 
+const authorListeners: Array<(ev: { sessionId: string; data: string }) => void> = [];
+
+export function mockOnAuthorData(
+  handler: (ev: { sessionId: string; data: string }) => void,
+): () => void {
+  authorListeners.push(handler);
+  return () => {
+    const i = authorListeners.indexOf(handler);
+    if (i >= 0) authorListeners.splice(i, 1);
+  };
+}
+
+export function mockOnAuthorExit(_handler: (ev: never) => void): () => void {
+  // The mock session never exits; browser development only needs the terminal
+  // to be visibly wired up.
+  return () => {};
+}
+
+let mockPrompt = "";
+
+export const mockAuthor = {
+  start: async (): Promise<string> => {
+    const id = "chat_mock";
+    // A few lines so the terminal is visibly wired up in browser development.
+    setTimeout(() => {
+      const text =
+        "\u001b[36m? Chief PRD Generator\u001b[0m\r\n\r\n" +
+        "1. What is the primary goal?\r\n   A. Reduce support burden\r\n" +
+        "   B. Improve onboarding\r\n\r\n> ";
+      for (const fn of authorListeners) fn({ sessionId: id, data: btoa(text) });
+    }, 200);
+    return id;
+  },
+  write: async (): Promise<void> => {},
+  resize: async (): Promise<void> => {},
+  interrupt: async (): Promise<void> => {},
+  stop: async (): Promise<void> => {},
+  scrollback: async (): Promise<string> => "",
+  getPrompt: async (kind: string) => ({
+    kind,
+    body: mockPrompt || "# Chief PRD Generator\n\nCreate a PRD at {{PRD_DIR}}/prd.md.\n\n{{CONTEXT}}\n",
+    custom: mockPrompt !== "",
+    path: `.chief/prompts/${kind}.md`,
+  }),
+  savePrompt: async (_kind: string, body: string): Promise<void> => {
+    mockPrompt = body;
+  },
+  resetPrompt: async (): Promise<void> => {
+    mockPrompt = "";
+  },
+  builtinPrompt: async (): Promise<string> =>
+    "# Chief PRD Generator\n\nCreate a PRD at {{PRD_DIR}}/prd.md.\n\n{{CONTEXT}}\n",
+};
+
 export const mockApi = {
   project: {
     open: async (path: string): Promise<Project> => ({ ...project, root: path }),
@@ -240,6 +294,7 @@ export const mockApi = {
     answer: async (): Promise<void> => {},
     questions: async (): Promise<Question[]> => [],
   },
+  author: mockAuthor,
 };
 
 export function mockOnEvents(handler: (events: LoopEvent[]) => void): () => void {

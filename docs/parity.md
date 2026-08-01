@@ -58,8 +58,9 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 | Completion screen | `completion.go` | todo | Including the confetti, which should be one short burst rather than continuous. |
 | Quit confirmation | `quit_confirm.go` | todo | |
 | First-run wizard | `first_time_setup.go` | todo | An empty state points at `chief new`. |
-| PRD authoring (`new`/`edit`) | `cmd/new.go`, `edit.go` | todo | Needs the embedded PTY pane. |
-| Keyboard map | `app.go` | partial | `s p x t , + - j k` work. No `1-9`, `d`, `l`, `n`, `e`, `?`, `g/G`. |
+| PRD authoring (`new`/`edit`) | `cmd/new.go`, `edit.go` | done | Embedded PTY pane. Exceeds chief: the prompt is editable per project. |
+| Keyboard map | `app.go` | partial | `s p x t n , + - j k` work. No `1-9`, `d`, `l`, `e`, `?`, `g/G`. |
+| **Custom PRD prompt** | — | done | New. `.chief/prompts/{new,edit}.md` overrides chief's compiled-in brief. |
 
 ## Deliberate departures
 

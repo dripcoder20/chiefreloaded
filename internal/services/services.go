@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dripcoder/loop/internal/authoring"
+	"github.com/dripcoder/loop/internal/prompts"
 	"github.com/dripcoder/loop/internal/session"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -150,3 +152,54 @@ func (r *RunService) Answer(id string, a session.Answer) error {
 
 // Questions returns everything currently waiting on the user.
 func (r *RunService) Questions() []session.Question { return r.s.PendingQuestions() }
+
+// AuthoringService drives the interactive agent session that writes a PRD, and
+// the prompt it is given.
+type AuthoringService struct{ s *session.Session }
+
+func NewAuthoring(s *session.Session) *AuthoringService { return &AuthoringService{s: s} }
+
+// Start opens a session and returns its id. Output arrives on the
+// "loop:author" event, not as a return value.
+func (a *AuthoringService) Start(spec authoring.Spec) (string, error) {
+	return a.s.StartAuthoring(spec)
+}
+
+// Write sends keystrokes. data is base64, because terminal input is bytes.
+func (a *AuthoringService) Write(id, data string) error { return a.s.WriteAuthoring(id, data) }
+
+// Resize tells the session its terminal changed size so the agent re-wraps.
+func (a *AuthoringService) Resize(id string, cols, rows int) error {
+	return a.s.ResizeAuthoring(id, cols, rows)
+}
+
+// Interrupt sends Ctrl-C.
+func (a *AuthoringService) Interrupt(id string) error { return a.s.InterruptAuthoring(id) }
+
+// Stop ends a session and everything it spawned.
+func (a *AuthoringService) Stop(id string) error { return a.s.StopAuthoring(id) }
+
+// Scrollback returns the output so far, base64, so a reopened view can redraw
+// instead of showing a blank terminal mid-conversation.
+func (a *AuthoringService) Scrollback(id string) (string, error) {
+	return a.s.AuthoringScrollback(id)
+}
+
+// GetPrompt returns the project's authoring prompt, which is chief's built-in
+// unless the project has overridden it.
+func (a *AuthoringService) GetPrompt(kind string) (prompts.Prompt, error) {
+	return a.s.Prompt(kind)
+}
+
+// SavePrompt writes a project override to .chief/prompts/<kind>.md. Saving an
+// empty body, or the built-in verbatim, clears the override instead.
+func (a *AuthoringService) SavePrompt(kind, body string) error {
+	return a.s.SavePrompt(kind, body)
+}
+
+// ResetPrompt removes the override, restoring chief's prompt.
+func (a *AuthoringService) ResetPrompt(kind string) error { return a.s.ResetPrompt(kind) }
+
+// BuiltinPrompt returns chief's own prompt, so the editor can offer it as a
+// starting point.
+func (a *AuthoringService) BuiltinPrompt(kind string) string { return a.s.BuiltinPrompt(kind) }

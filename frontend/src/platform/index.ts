@@ -9,10 +9,14 @@
  */
 import { Events } from "@wailsio/runtime";
 import {
+  AuthoringService,
   PRDService,
   ProjectService,
   RunService,
 } from "../../bindings/github.com/dripcoder/loop/internal/services";
+import type { AuthorEvent, AuthorExit } from "../../bindings/github.com/dripcoder/loop/internal/session/models";
+import type { Spec as AuthorSpec } from "../../bindings/github.com/dripcoder/loop/internal/authoring/models";
+import type { Prompt } from "../../bindings/github.com/dripcoder/loop/internal/prompts/models";
 import { EventKind, LoopState } from "../../bindings/github.com/dripcoder/loop/internal/session/models";
 import type {
   Environment,
@@ -28,7 +32,13 @@ import type {
   StorySnap,
   Settings,
 } from "../../bindings/github.com/dripcoder/loop/internal/session/models";
-import { mockApi, mockOnEvents, mockOnReady } from "./mock";
+import {
+  mockApi,
+  mockOnAuthorData,
+  mockOnAuthorExit,
+  mockOnEvents,
+  mockOnReady,
+} from "./mock";
 
 export { EventKind, LoopState };
 
@@ -45,11 +55,17 @@ export type {
   Answer,
   StorySnap,
   Settings,
+  AuthorEvent,
+  AuthorExit,
+  AuthorSpec,
+  Prompt,
 };
 
 /** Event names the Go bridge emits. Kept in sync with main.go. */
 export const EVENT_BATCH = "loop:events";
 export const EVENT_READY = "loop:ready";
+export const EVENT_AUTHOR = "loop:author";
+export const EVENT_AUTHOR_EXIT = "loop:author:exit";
 
 /**
  * True when running inside a real webview rather than a browser preview.
@@ -89,6 +105,28 @@ export function onEvents(handler: (events: LoopEvent[]) => void): () => void {
 export function onReady(handler: () => void): () => void {
   if (!isDesktop) return mockOnReady(handler);
   return Events.On(EVENT_READY, () => handler());
+}
+
+/** Terminal output from an authoring session. */
+export function onAuthorData(handler: (ev: AuthorEvent) => void): () => void {
+  if (!isDesktop) return mockOnAuthorData(handler);
+  return Events.On(EVENT_AUTHOR, (e: { data: unknown }) => handler(unwrap(e) as AuthorEvent));
+}
+
+/** Fires once an authoring session has exited, with what it produced. */
+export function onAuthorExit(handler: (ev: AuthorExit) => void): () => void {
+  if (!isDesktop) return mockOnAuthorExit(handler);
+  return Events.On(EVENT_AUTHOR_EXIT, (e: { data: unknown }) => handler(unwrap(e) as AuthorExit));
+}
+
+/**
+ * Wails wraps single-argument payloads inconsistently across versions: some
+ * deliver the value, some a one-element array. Normalise rather than depend on
+ * which, since the difference only shows up at runtime.
+ */
+function unwrap(e: { data: unknown }): unknown {
+  const d = e?.data;
+  return Array.isArray(d) ? d[0] : d;
 }
 
 /**
@@ -131,6 +169,20 @@ const wailsApi = {
     replay: (sinceSeq: number) => RunService.Replay(sinceSeq),
     answer: (id: string, a: Answer): Promise<void> => RunService.Answer(id, a),
     questions: (): Promise<Question[]> => list(RunService.Questions()),
+  },
+  author: {
+    start: (spec: AuthorSpec): Promise<string> => AuthoringService.Start(spec),
+    write: (id: string, base64: string): Promise<void> => AuthoringService.Write(id, base64),
+    resize: (id: string, cols: number, rows: number): Promise<void> =>
+      AuthoringService.Resize(id, cols, rows),
+    interrupt: (id: string): Promise<void> => AuthoringService.Interrupt(id),
+    stop: (id: string): Promise<void> => AuthoringService.Stop(id),
+    scrollback: (id: string): Promise<string> => AuthoringService.Scrollback(id),
+    getPrompt: (kind: string): Promise<Prompt> => AuthoringService.GetPrompt(kind),
+    savePrompt: (kind: string, body: string): Promise<void> =>
+      AuthoringService.SavePrompt(kind, body),
+    resetPrompt: (kind: string): Promise<void> => AuthoringService.ResetPrompt(kind),
+    builtinPrompt: (kind: string): Promise<string> => AuthoringService.BuiltinPrompt(kind),
   },
 };
 

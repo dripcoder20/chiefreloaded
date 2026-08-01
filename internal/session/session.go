@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/dripcoder/loop/internal/agentx"
+	"github.com/dripcoder/loop/internal/authoring"
 	"github.com/dripcoder/loop/internal/chief/agent"
 	"github.com/dripcoder/loop/internal/chief/config"
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
@@ -82,6 +83,12 @@ type Session struct {
 	questionSeq int
 	autoAnswer  bool
 
+	// authoring owns the interactive PRD-writing sessions. authorSpecs remembers
+	// what each was started for, so the completion event can say which PRD it
+	// belonged to without the front-end having to track it.
+	authoring   *authoring.Manager
+	authorSpecs map[string]authoring.Spec
+
 	closeOnce sync.Once
 }
 
@@ -98,14 +105,16 @@ func New(opts Options) (*Session, error) {
 	}
 
 	return &Session{
-		opts:      opts,
-		log:       opts.Logger,
-		now:       opts.Clock,
-		bus:       newBus(opts.EventBuffer, opts.Clock),
-		runs:      make(map[string]*RunSnapshot),
-		live:      make(map[string]*run),
-		questions: make(map[QuestionID]Question),
-		pending:   make(map[QuestionID]chan Answer),
+		opts:        opts,
+		log:         opts.Logger,
+		now:         opts.Clock,
+		bus:         newBus(opts.EventBuffer, opts.Clock),
+		runs:        make(map[string]*RunSnapshot),
+		live:        make(map[string]*run),
+		questions:   make(map[QuestionID]Question),
+		pending:     make(map[QuestionID]chan Answer),
+		authoring:   authoring.NewManager(),
+		authorSpecs: make(map[string]authoring.Spec),
 	}, nil
 }
 
@@ -411,7 +420,12 @@ func (s *Session) PendingQuestions() []Question {
 // Close shuts the session down and closes the event channel once the queue has
 // drained. Safe to call more than once.
 func (s *Session) Close() error {
-	s.closeOnce.Do(func() { s.bus.close() })
+	s.closeOnce.Do(func() {
+		// Authoring sessions are interactive subprocesses holding a PTY; leaving
+		// them behind would strand an agent with no window attached to it.
+		s.authoring.StopAll()
+		s.bus.close()
+	})
 	return nil
 }
 
