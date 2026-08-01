@@ -118,11 +118,30 @@ func TestParseLineCodex_error(t *testing.T) {
 	}
 }
 
-func TestParseLineCodex_turnCompleted_ignored(t *testing.T) {
+func TestParseLineCodex_turnCompleted_usage(t *testing.T) {
 	line := `{"type":"turn.completed","usage":{"input_tokens":24763,"cached_input_tokens":24448,"output_tokens":122}}`
 	ev := ParseLineCodex(line)
-	if ev != nil {
-		t.Errorf("expected nil (ignore turn.completed), got %v", ev)
+	if ev == nil {
+		t.Fatal("expected usage event, got nil")
+	}
+	if ev.Type != EventUsage {
+		t.Fatalf("expected EventUsage, got %v", ev.Type)
+	}
+	if ev.Usage == nil {
+		t.Fatal("expected Usage set")
+	}
+	assertInt64Ptr(t, "InputTokens", ev.Usage.InputTokens, 24763)
+	assertInt64Ptr(t, "OutputTokens", ev.Usage.OutputTokens, 122)
+	assertInt64Ptr(t, "CacheReadTokens", ev.Usage.CacheReadTokens, 24448)
+	// Codex does not report these; they must remain unavailable, not 0.
+	if ev.Usage.CacheWriteTokens != nil {
+		t.Errorf("expected CacheWriteTokens nil, got %d", *ev.Usage.CacheWriteTokens)
+	}
+	if ev.Usage.ReasoningTokens != nil {
+		t.Errorf("expected ReasoningTokens nil, got %d", *ev.Usage.ReasoningTokens)
+	}
+	if ev.Usage.TotalTokens != nil {
+		t.Errorf("expected TotalTokens nil, got %d", *ev.Usage.TotalTokens)
 	}
 }
 
