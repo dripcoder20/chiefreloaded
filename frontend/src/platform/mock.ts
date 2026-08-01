@@ -143,6 +143,24 @@ let run: RunSnapshot = {
 // adopts the numbers wholesale and a replayed event re-adopts them rather than
 // adding, so nothing is ever double counted.
 
+type UsageGroup = {
+  provider?: string;
+  model?: string;
+  currency?: string;
+  records: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cost: number;
+  hasCost: boolean;
+  costKind?: string;
+  contextWindow?: number;
+  peakContextTokens?: number;
+};
+
 type UsageTotals = {
   records: number;
   inputTokens: number;
@@ -153,6 +171,7 @@ type UsageTotals = {
   totalTokens: number;
   cost: number;
   currency: string;
+  groups: UsageGroup[];
 };
 
 type UsageRecord = {
@@ -170,7 +189,9 @@ type UsageRecord = {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   totalTokens?: number;
+  contextWindow?: number;
   cost?: number;
+  estimated?: boolean;
   currency?: string;
 };
 
@@ -192,6 +213,7 @@ function emptyTotals(): UsageTotals {
     totalTokens: 0,
     cost: 0,
     currency: "",
+    groups: [],
   };
 }
 
@@ -218,6 +240,61 @@ function foldRecord(t: UsageTotals, rec: UsageRecord): void {
   t.totalTokens += recordTotal(rec);
   if (rec.cost != null) t.cost += rec.cost;
   if (t.currency === "" && rec.currency) t.currency = rec.currency;
+  foldGroup(t, rec);
+}
+
+/** foldGroup mirrors the Go ledger's per-(provider, model, currency) grouping so
+ *  the mock exercises the detailed panel's grouped rendering faithfully. */
+function foldGroup(t: UsageTotals, rec: UsageRecord): void {
+  const provider = rec.provider ?? "";
+  const model = rec.model ?? "";
+  const currency = rec.currency ?? "";
+  let g = t.groups.find(
+    (x) => x.provider === provider && x.model === model && x.currency === currency,
+  );
+  if (!g) {
+    g = {
+      provider,
+      model,
+      currency,
+      records: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      cost: 0,
+      hasCost: false,
+    };
+    t.groups.push(g);
+  }
+  g.records += 1;
+  g.inputTokens += rec.inputTokens ?? 0;
+  g.outputTokens += rec.outputTokens ?? 0;
+  g.reasoningTokens += rec.reasoningTokens ?? 0;
+  g.cacheReadTokens += rec.cacheReadTokens ?? 0;
+  g.cacheWriteTokens += rec.cacheWriteTokens ?? 0;
+  const total = recordTotal(rec);
+  g.totalTokens += total;
+  g.peakContextTokens = Math.max(g.peakContextTokens ?? 0, total);
+  if (rec.contextWindow != null) {
+    g.contextWindow = Math.max(g.contextWindow ?? 0, rec.contextWindow);
+  }
+  if (rec.cost != null) {
+    g.cost += rec.cost;
+    g.hasCost = true;
+    noteCostKind(g, rec.estimated === true);
+  }
+}
+
+function noteCostKind(g: UsageGroup, estimated: boolean): void {
+  const kind = estimated ? "estimated" : "reported";
+  if (!g.costKind) {
+    g.costKind = kind;
+    return;
+  }
+  if (g.costKind !== kind) g.costKind = "mixed";
 }
 
 function accumulate(m: Record<string, UsageTotals>, key: string, rec: UsageRecord): void {
@@ -407,6 +484,7 @@ function emitUsage(): void {
     outputTokens: 260 + usageSeq * 6,
     cacheReadTokens: 7_000 + usageSeq * 30,
     cacheWriteTokens: 500 + usageSeq * 5,
+    contextWindow: 200_000,
     cost: 0.03,
     currency: "USD",
   };

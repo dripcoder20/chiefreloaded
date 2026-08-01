@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"testing"
 
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
@@ -231,11 +232,11 @@ func TestUsageAttributedThroughTheRunEngine(t *testing.T) {
 
 	// A reconnecting consumer adopts the snapshot's absolute totals; replaying the
 	// carrying event re-adopts the same numbers rather than adding to them.
-	if s.Snapshot().Usage.Project != rep.Project {
+	if !reflect.DeepEqual(s.Snapshot().Usage.Project, rep.Project) {
 		t.Errorf("snapshot totals %+v differ from the report %+v",
 			s.Snapshot().Usage.Project, rep.Project)
 	}
-	if latest := latestUsageReport(t, s); latest.Project != rep.Project {
+	if latest := latestUsageReport(t, s); !reflect.DeepEqual(latest.Project, rep.Project) {
 		t.Errorf("the usage event's report %+v is not the absolute total %+v",
 			latest.Project, rep.Project)
 	}
@@ -303,10 +304,10 @@ func TestUsageSnapshotEqualsAppliedEventsAndReplayDoesNotDoubleCount(t *testing.
 	}
 	applied := buildReport(records)
 	fresh := s.Snapshot().Usage
-	if applied.Project != fresh.Project {
+	if !reflect.DeepEqual(applied.Project, fresh.Project) {
 		t.Errorf("applying the events gives %+v, snapshot has %+v", applied.Project, fresh.Project)
 	}
-	if applied.Runs[runID] != fresh.Runs[runID] {
+	if !reflect.DeepEqual(applied.Runs[runID], fresh.Runs[runID]) {
 		t.Errorf("session total from events %+v differs from snapshot %+v",
 			applied.Runs[runID], fresh.Runs[runID])
 	}
@@ -320,7 +321,7 @@ func TestUsageSnapshotEqualsAppliedEventsAndReplayDoesNotDoubleCount(t *testing.
 	for _, rec := range records { // the "live" re-delivery of already-seen keys
 		l.add(rec)
 	}
-	if got := l.report().Project; got != fresh.Project {
+	if got := l.report().Project; !reflect.DeepEqual(got, fresh.Project) {
 		t.Errorf("replay + live double counted: %+v, want %+v", got, fresh.Project)
 	}
 }
@@ -356,4 +357,96 @@ func latestUsageReport(t *testing.T, s *Session) UsageReport {
 		t.Fatal("no usage event carried a report")
 	}
 	return *latest
+}
+
+// findGroup returns the group matching a provider/model/currency triple, or nil.
+func findGroup(totals UsageTotals, provider, model, currency string) *UsageGroup {
+	for i := range totals.Groups {
+		g := &totals.Groups[i]
+		if g.Provider == provider && g.Model == model && g.Currency == currency {
+			return g
+		}
+	}
+	return nil
+}
+
+// Usage from different providers, models or currencies must be grouped, never
+// combined into one misleading figure. A scope's flat totals still sum across
+// everything; its Groups keep each triple separate.
+func TestUsageGroupsSplitMixedProvidersModelsAndCurrencies(t *testing.T) {
+	l := newUsageLedger()
+	// Two claude records on the same model+currency: one group, summed.
+	l.add(UsageRecord{
+		Key: "k1", RunID: "run_1", StoryID: "US-001", Attempt: 1,
+		Provider: "claude", Model: "claude-opus-4", Currency: "USD",
+		InputTokens: ptr[int64](100), Cost: ptr(0.01),
+	})
+	l.add(UsageRecord{
+		Key: "k2", RunID: "run_1", StoryID: "US-001", Attempt: 1,
+		Provider: "claude", Model: "claude-opus-4", Currency: "USD",
+		InputTokens: ptr[int64](50), Cost: ptr(0.02), Estimated: true,
+	})
+	// A different model, and a different currency: each its own group.
+	l.add(UsageRecord{
+		Key: "k3", RunID: "run_1", StoryID: "US-001", Attempt: 1,
+		Provider: "codex", Model: "gpt-5-codex", Currency: "USD",
+		InputTokens: ptr[int64](200),
+	})
+	l.add(UsageRecord{
+		Key: "k4", RunID: "run_1", StoryID: "US-001", Attempt: 1,
+		Provider: "claude", Model: "claude-opus-4", Currency: "EUR",
+		InputTokens: ptr[int64](30), Cost: ptr(0.05),
+	})
+
+	story := l.report().Stories[storyScopeKey("run_1", "US-001")]
+	if len(story.Groups) != 3 {
+		t.Fatalf("groups = %d, want 3 distinct (provider,model,currency) triples", len(story.Groups))
+	}
+
+	// The two same-triple claude/USD records fold into one group with a mixed cost
+	// kind, since one cost was reported and one estimated.
+	claude := findGroup(story, "claude", "claude-opus-4", "USD")
+	if claude == nil || claude.Records != 2 || claude.InputTokens != 150 {
+		t.Fatalf("claude/USD group = %+v, want 2 records / 150 input", claude)
+	}
+	if claude.CostKind != costKindMixed {
+		t.Errorf("claude/USD cost kind = %q, want %q", claude.CostKind, costKindMixed)
+	}
+
+	// The codex group reported no cost at all — HasCost stays false so a real 0.00
+	// is never inferred.
+	codex := findGroup(story, "codex", "gpt-5-codex", "USD")
+	if codex == nil || codex.HasCost {
+		t.Errorf("codex group = %+v, want a cost-less group", codex)
+	}
+
+	// A reported-only group is labeled reported, not estimated or mixed.
+	eur := findGroup(story, "claude", "claude-opus-4", "EUR")
+	if eur == nil || eur.CostKind != costKindReported {
+		t.Errorf("eur group = %+v, want cost kind %q", eur, costKindReported)
+	}
+}
+
+// A group carries the context-window size and the peak single-payload footprint
+// so context utilization can be shown when a provider reports a window.
+func TestUsageGroupCarriesContextWindow(t *testing.T) {
+	l := newUsageLedger()
+	l.add(UsageRecord{
+		Key: "k1", RunID: "run_1", StoryID: "US-001", Attempt: 1,
+		Provider: "claude", Model: "claude-opus-4",
+		InputTokens: ptr[int64](1000), ContextWindow: ptr[int64](200_000),
+	})
+	l.add(UsageRecord{
+		Key: "k2", RunID: "run_1", StoryID: "US-001", Attempt: 1,
+		Provider: "claude", Model: "claude-opus-4",
+		InputTokens: ptr[int64](3000), ContextWindow: ptr[int64](200_000),
+	})
+
+	g := findGroup(l.report().Stories[storyScopeKey("run_1", "US-001")], "claude", "claude-opus-4", "")
+	if g == nil || g.ContextWindow != 200_000 {
+		t.Fatalf("group = %+v, want context window 200000", g)
+	}
+	if g.PeakContextTokens != 3000 {
+		t.Errorf("peak context tokens = %d, want the largest single payload (3000)", g.PeakContextTokens)
+	}
 }

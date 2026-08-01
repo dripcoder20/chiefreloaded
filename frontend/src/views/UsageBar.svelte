@@ -1,13 +1,15 @@
 <script lang="ts">
   import type { RunSnapshot } from "../platform";
   import type { UsageTotals } from "../stores/app.svelte";
+  import UsagePanel from "./UsagePanel.svelte";
 
   /**
-   * Live usage summary for the status bar. Collapsed it shows the three headline
-   * numbers — current story tokens, current session tokens, session cost — and
-   * expands to a per-class breakdown. It is a disclosure widget so assistive
-   * technology sees its expanded/collapsed state; every abbreviated value carries
-   * the unabridged number as its accessible label.
+   * Live usage summary for the status bar. It shows the three headline numbers —
+   * current story tokens, current session tokens, session cost — and activating
+   * it opens the detailed usage panel over the current view without navigating
+   * away. It is a disclosure trigger so assistive technology sees the panel's
+   * open/closed state; every abbreviated value carries the unabridged number as
+   * its accessible label. When the panel closes, focus returns here.
    */
   let {
     run,
@@ -19,7 +21,18 @@
     story: UsageTotals | undefined;
   } = $props();
 
-  let expanded = $state(false);
+  let panelOpen = $state(false);
+  let triggerEl = $state<HTMLButtonElement | null>(null);
+
+  function openPanel(): void {
+    panelOpen = true;
+  }
+
+  function closePanel(): void {
+    panelOpen = false;
+    // Return focus to the trigger, as a modal dialog must.
+    triggerEl?.focus();
+  }
 
   // A run reports usage once its first attempt does; until then the slice is
   // absent or empty. That is the "Waiting for usage" state, distinct from having
@@ -78,25 +91,6 @@
   const storyTokens = $derived(tokenField(story, "current story"));
   const sessionTokens = $derived(tokenField(session, "current session"));
   const sessionCost = $derived(costField(session));
-
-  type Row = { label: string; field: Field };
-  const breakdown = $derived<Row[]>([
-    { label: "Input", field: tokenClass(session, "inputTokens", "input") },
-    { label: "Output", field: tokenClass(session, "outputTokens", "output") },
-    { label: "Cache read", field: tokenClass(session, "cacheReadTokens", "cache read") },
-    { label: "Cache write", field: tokenClass(session, "cacheWriteTokens", "cache write") },
-    { label: "Reasoning", field: tokenClass(session, "reasoningTokens", "reasoning") },
-  ]);
-
-  // A partially supported provider reports only some token classes; a class it
-  // never reports sums to zero, which we show as unavailable rather than "0".
-  function tokenClass(totals: UsageTotals | undefined, key: keyof UsageTotals, name: string): Field {
-    const n = totals ? (totals[key] as number) : 0;
-    if (!totals || n === 0) {
-      return { available: false, text: UNAVAILABLE, label: `${name} tokens unavailable` };
-    }
-    return { available: true, text: compactTokens(n), label: `${name}: ${fullTokens(n)}` };
-  }
 </script>
 
 {#if run}
@@ -106,9 +100,11 @@
     {:else}
       <button
         class="toggle"
-        aria-expanded={expanded}
-        aria-label={`Usage summary, ${expanded ? "expanded" : "collapsed"}`}
-        onclick={() => (expanded = !expanded)}
+        bind:this={triggerEl}
+        aria-haspopup="dialog"
+        aria-expanded={panelOpen}
+        aria-label="Open usage details"
+        onclick={openPanel}
       >
         <span class="pair">
           <span class="k">story</span>
@@ -128,29 +124,14 @@
             {sessionCost.text}
           </span>
         </span>
-        <span class="chevron" aria-hidden="true">{expanded ? "▾" : "▴"}</span>
+        <span class="chevron" aria-hidden="true">▴</span>
       </button>
-
-      {#if expanded}
-        <div class="detail" role="region" aria-label="Session usage breakdown">
-          {#each breakdown as row}
-            <div class="row">
-              <span class="k">{row.label}</span>
-              <span class="v" class:muted={!row.field.available} aria-label={row.field.label}>
-                {row.field.text}
-              </span>
-            </div>
-          {/each}
-          <div class="row">
-            <span class="k">Cost</span>
-            <span class="v" class:muted={!sessionCost.available} aria-label={sessionCost.label}>
-              {sessionCost.text}
-            </span>
-          </div>
-        </div>
-      {/if}
     {/if}
   </div>
+{/if}
+
+{#if panelOpen}
+  <UsagePanel onclose={closePanel} />
 {/if}
 
 <style>
@@ -213,26 +194,5 @@
   .chevron {
     color: var(--fg-3);
     font-size: 9px;
-  }
-
-  .detail {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0;
-    display: grid;
-    gap: 4px 16px;
-    min-width: 160px;
-    padding: 8px 12px;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
-    z-index: 20;
-  }
-  .detail .row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 16px;
   }
 </style>

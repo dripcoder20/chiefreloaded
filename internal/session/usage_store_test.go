@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -162,10 +163,10 @@ func TestUsageSurvivesRestart(t *testing.T) {
 	if len(second.Runs()) != 0 {
 		t.Error("reopening a project must not start a run")
 	}
-	if got := second.Usage().Project; got != want {
+	if got := second.Usage().Project; !reflect.DeepEqual(got, want) {
 		t.Errorf("restored total = %+v, want the persisted %+v", got, want)
 	}
-	if got := second.Snapshot().Usage.Project; got != want {
+	if got := second.Snapshot().Usage.Project; !reflect.DeepEqual(got, want) {
 		t.Errorf("snapshot total = %+v, want the persisted %+v", got, want)
 	}
 }

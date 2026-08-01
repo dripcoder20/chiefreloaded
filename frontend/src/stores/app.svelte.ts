@@ -31,6 +31,32 @@ export type View = "stories" | "author" | "settings";
  * `mock.ts` does: the bindings are absent in a browser dev checkout, and a plain
  * structural type lets both paths share one contract without a build step.
  */
+/**
+ * A per-(provider, model, currency) subtotal within a scope. When a scope has
+ * more than one group its usage came from mixed providers, models or currencies
+ * and must be shown group by group rather than summed into one figure.
+ */
+export type UsageGroup = {
+  provider?: string;
+  model?: string;
+  currency?: string;
+  records: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cost: number;
+  hasCost: boolean;
+  /** "reported", "estimated", or "mixed" once hasCost; absent otherwise. */
+  costKind?: string;
+  /** Model context-window size in tokens, absent/0 when the provider omits it. */
+  contextWindow?: number;
+  /** Largest single-payload token footprint, for context utilization. */
+  peakContextTokens?: number;
+};
+
 export type UsageTotals = {
   records: number;
   inputTokens: number;
@@ -41,6 +67,7 @@ export type UsageTotals = {
   totalTokens: number;
   cost: number;
   currency: string;
+  groups?: UsageGroup[];
 };
 
 export type UsageReport = {
@@ -106,6 +133,19 @@ class AppState {
     if (!run || !this.usage) return {};
     const story = run.storyId ? this.usage.stories[`${run.id}/${run.storyId}`] : undefined;
     return { session: this.usage.runs[run.id], story };
+  }
+
+  /** The project (General) usage grand total across every run. */
+  get generalUsage(): UsageTotals | undefined {
+    return this.usage?.project;
+  }
+
+  /** The human title of the run's current story, for naming a scope. */
+  get currentStoryTitle(): string | null {
+    const run = this.currentRun;
+    if (!run?.storyId) return null;
+    const story = this.detail?.stories?.find((s) => s.id === run.storyId);
+    return story?.title ?? null;
   }
 }
 

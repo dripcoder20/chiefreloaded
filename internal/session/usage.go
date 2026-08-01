@@ -49,8 +49,15 @@ type UsageRecord struct {
 	CacheWriteTokens *int64 `json:"cacheWriteTokens,omitempty"`
 	TotalTokens      *int64 `json:"totalTokens,omitempty"`
 
-	Cost     *float64 `json:"cost,omitempty"`
-	Currency string   `json:"currency,omitempty"`
+	// ContextWindow is the model's context-window size in tokens, when the
+	// provider reports it. Nil when unknown.
+	ContextWindow *int64 `json:"contextWindow,omitempty"`
+
+	Cost *float64 `json:"cost,omitempty"`
+	// Estimated is true when Cost is a locally derived estimate rather than a
+	// provider-reported figure. It is meaningless when Cost is nil.
+	Estimated bool   `json:"estimated,omitempty"`
+	Currency  string `json:"currency,omitempty"`
 }
 
 // totalTokens returns the record's token count: the provider-reported total when
@@ -70,8 +77,50 @@ func (rec UsageRecord) totalTokens() int64 {
 	return total
 }
 
-// UsageTotals is a summed set of usage records at some scope. Every field is a
-// plain aggregate: nil record fields contribute nothing.
+// Cost-kind labels. A group carries the kind of the costs it summed so the UI can
+// label a total Reported or Estimated, or flag a Mixed total it must not conflate.
+const (
+	costKindReported  = "reported"
+	costKindEstimated = "estimated"
+	costKindMixed     = "mixed"
+)
+
+// UsageGroup is the subtotal for a single (provider, model, currency) triple
+// within a scope. A scope with more than one group holds usage that must not be
+// combined into one figure — different providers, models, or currencies — so the
+// UI renders each group on its own rather than summing across them.
+type UsageGroup struct {
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Currency string `json:"currency,omitempty"`
+
+	Records          int   `json:"records"`
+	InputTokens      int64 `json:"inputTokens"`
+	OutputTokens     int64 `json:"outputTokens"`
+	ReasoningTokens  int64 `json:"reasoningTokens"`
+	CacheReadTokens  int64 `json:"cacheReadTokens"`
+	CacheWriteTokens int64 `json:"cacheWriteTokens"`
+	TotalTokens      int64 `json:"totalTokens"`
+
+	Cost float64 `json:"cost"`
+	// HasCost is true once any record in the group carried a cost, so a real
+	// reported 0.00 is distinguishable from "no cost reported".
+	HasCost bool `json:"hasCost"`
+	// CostKind is reported, estimated, or mixed once HasCost; empty otherwise.
+	CostKind string `json:"costKind,omitempty"`
+
+	// ContextWindow is the largest context-window size seen in the group, 0 when
+	// no record reported one. PeakContextTokens is the biggest single-payload
+	// token footprint; together they give context utilization when the window is
+	// known.
+	ContextWindow     int64 `json:"contextWindow,omitempty"`
+	PeakContextTokens int64 `json:"peakContextTokens,omitempty"`
+}
+
+// UsageTotals is a summed set of usage records at some scope. The flat fields are
+// a plain aggregate across every record (nil record fields contribute nothing);
+// Groups breaks the same records down by provider, model and currency so mixed
+// usage is never presented as one misleading number.
 type UsageTotals struct {
 	Records          int     `json:"records"`
 	InputTokens      int64   `json:"inputTokens"`
@@ -82,9 +131,14 @@ type UsageTotals struct {
 	TotalTokens      int64   `json:"totalTokens"`
 	Cost             float64 `json:"cost"`
 	Currency         string  `json:"currency,omitempty"`
+
+	// Groups holds the per-(provider, model, currency) subtotals, in first-seen
+	// order. A single group means the flat totals above are safe to show as one
+	// figure; more than one means they are not.
+	Groups []UsageGroup `json:"groups,omitempty"`
 }
 
-// addRecord folds one record into the running totals.
+// addRecord folds one record into the running totals and its matching group.
 func (t *UsageTotals) addRecord(rec UsageRecord) {
 	t.Records++
 	t.InputTokens += valueOrZero(rec.InputTokens)
@@ -98,6 +152,71 @@ func (t *UsageTotals) addRecord(rec UsageRecord) {
 	}
 	if t.Currency == "" && rec.Currency != "" {
 		t.Currency = rec.Currency
+	}
+	t.foldGroup(rec)
+}
+
+// foldGroup folds a record into the subtotal for its (provider, model, currency)
+// triple, appending a new group the first time that triple appears.
+func (t *UsageTotals) foldGroup(rec UsageRecord) {
+	i := t.groupIndex(rec.Provider, rec.Model, rec.Currency)
+	if i < 0 {
+		t.Groups = append(t.Groups, UsageGroup{
+			Provider: rec.Provider, Model: rec.Model, Currency: rec.Currency,
+		})
+		i = len(t.Groups) - 1
+	}
+	t.Groups[i].addRecord(rec)
+}
+
+// groupIndex returns the index of the group matching the triple, or -1 if none
+// has been started yet.
+func (t *UsageTotals) groupIndex(provider, model, currency string) int {
+	for i := range t.Groups {
+		g := &t.Groups[i]
+		if g.Provider == provider && g.Model == model && g.Currency == currency {
+			return i
+		}
+	}
+	return -1
+}
+
+// addRecord folds one record into the group subtotal.
+func (g *UsageGroup) addRecord(rec UsageRecord) {
+	g.Records++
+	g.InputTokens += valueOrZero(rec.InputTokens)
+	g.OutputTokens += valueOrZero(rec.OutputTokens)
+	g.ReasoningTokens += valueOrZero(rec.ReasoningTokens)
+	g.CacheReadTokens += valueOrZero(rec.CacheReadTokens)
+	g.CacheWriteTokens += valueOrZero(rec.CacheWriteTokens)
+	total := rec.totalTokens()
+	g.TotalTokens += total
+	if total > g.PeakContextTokens {
+		g.PeakContextTokens = total
+	}
+	if rec.ContextWindow != nil && *rec.ContextWindow > g.ContextWindow {
+		g.ContextWindow = *rec.ContextWindow
+	}
+	if rec.Cost != nil {
+		g.Cost += *rec.Cost
+		g.HasCost = true
+		g.noteCostKind(rec.Estimated)
+	}
+}
+
+// noteCostKind records whether the group's costs are all reported, all estimated,
+// or a mix of the two, so a combined figure is never silently mislabeled.
+func (g *UsageGroup) noteCostKind(estimated bool) {
+	kind := costKindReported
+	if estimated {
+		kind = costKindEstimated
+	}
+	if g.CostKind == "" {
+		g.CostKind = kind
+		return
+	}
+	if g.CostKind != kind {
+		g.CostKind = costKindMixed
 	}
 }
 
@@ -187,7 +306,8 @@ func buildUsageRecord(key string, attr usageAttribution, u *chiefloop.Usage) Usa
 	rec.CacheReadTokens = copyInt64(u.CacheReadTokens)
 	rec.CacheWriteTokens = copyInt64(u.CacheWriteTokens)
 	rec.TotalTokens = copyInt64(u.TotalTokens)
-	rec.Cost = resolveCost(u)
+	rec.ContextWindow = copyInt64(u.ContextWindow)
+	rec.Cost, rec.Estimated = resolveCost(u)
 	rec.Currency = u.Currency
 	rec.Model = u.Model
 	rec.Provider = attr.provider
@@ -195,12 +315,12 @@ func buildUsageRecord(key string, attr usageAttribution, u *chiefloop.Usage) Usa
 }
 
 // resolveCost prefers the provider-reported cost and falls back to a locally
-// estimated one.
-func resolveCost(u *chiefloop.Usage) *float64 {
+// estimated one, reporting which kind was chosen so it can be labeled downstream.
+func resolveCost(u *chiefloop.Usage) (*float64, bool) {
 	if u.ReportedCost != nil {
-		return copyFloat64(u.ReportedCost)
+		return copyFloat64(u.ReportedCost), false
 	}
-	return copyFloat64(u.EstimatedCost)
+	return copyFloat64(u.EstimatedCost), u.EstimatedCost != nil
 }
 
 // usageLedger owns the session's usage records. It assigns stable keys,
