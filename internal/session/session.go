@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dripcoder/loop/internal/agentx"
 	"github.com/dripcoder/loop/internal/chief/agent"
 	"github.com/dripcoder/loop/internal/chief/config"
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
@@ -117,9 +118,9 @@ func (s *Session) publish(ev Event) { s.bus.publish(ev) }
 // The provider is verified to be on PATH here rather than at first use. A
 // missing CLI discovered mid-run looks like the agent silently doing nothing,
 // which is a miserable thing to debug.
-func (s *Session) resolveProvider(override string) (chiefloop.Provider, error) {
+func (s *Session) resolveProvider(override string) (*agentx.GroupLeader, error) {
 	if s.opts.Provider != nil {
-		return s.opts.Provider, nil
+		return agentx.NewGroupLeader(s.opts.Provider), nil
 	}
 
 	cfg := s.Config()
@@ -130,7 +131,9 @@ func (s *Session) resolveProvider(override string) (chiefloop.Provider, error) {
 	if err := agent.CheckInstalled(p); err != nil {
 		return nil, err
 	}
-	return p, nil
+	// Every provider is wrapped so stopping a run reaches whatever the agent
+	// spawned, not just the agent. See agentx.GroupLeader.
+	return agentx.NewGroupLeader(p), nil
 }
 
 // afterStoryDone is the per-story git hook: push the branch, open its draft PR,

@@ -44,6 +44,7 @@ Commands:
   doctor            Report the detected environment
   list              List the PRDs in a project
   show <prd>        Show a PRD's stories
+  run <prd>         Run a PRD to completion, streaming progress
   watch             Stream the session event log until interrupted
 
 Flags:
@@ -94,7 +95,7 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
-	case "doctor", "list", "show", "watch":
+	case "doctor", "list", "show", "run", "watch":
 	default:
 		return fmt.Errorf("unknown command %q (try `loopctl help`)", cmd)
 	}
@@ -128,10 +129,103 @@ func run(args []string) error {
 			return fmt.Errorf("show needs a PRD name")
 		}
 		return show(s, cmdArgs[0], *asJSON)
+	case "run":
+		if len(cmdArgs) < 1 {
+			return fmt.Errorf("run needs a PRD name")
+		}
+		return runPRD(ctx, s, cmdArgs[0])
 	case "watch":
 		return watch(ctx, s)
 	}
 	return nil
+}
+
+// runPRD drives a PRD to completion, printing progress as it goes.
+//
+// Questions answer themselves here. A terminal could prompt, but the value of
+// this command is unattended operation — it is what the end-to-end tests use —
+// and every question has a recommended option chosen to be the safe one.
+func runPRD(ctx context.Context, s *session.Session, name string) error {
+	s.AutoAnswer(true)
+
+	printed := make(chan struct{})
+	go func() {
+		defer close(printed)
+		for ev := range s.Events() {
+			line := describe(ev)
+			if line != "" {
+				fmt.Println(line)
+			}
+		}
+	}()
+
+	runID, err := s.Start(ctx, session.StartRequest{PRD: name})
+	if err != nil {
+		return err
+	}
+
+	// A run deliberately outlives the context it was started with — in the GUI
+	// that context belongs to a single bound method call, and killing the run
+	// when it returns would be absurd. The consequence here is that Ctrl-C has
+	// to stop the run explicitly. Without this the process exits with a story
+	// still marked in-progress, and the next run finds it wedged.
+	go func() {
+		<-ctx.Done()
+		fmt.Fprintln(os.Stderr, "\nstopping the run…")
+		_ = s.Stop(runID)
+	}()
+
+	// Wait on the run itself, not on ctx: once stopping has been asked for we
+	// want the cleanup to finish, which is the whole point of asking.
+	snap, err := s.WaitForRun(context.WithoutCancel(ctx), runID)
+	_ = s.Close()
+	<-printed
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\n%s: %s", name, snap.State)
+	if snap.Error != nil {
+		fmt.Printf(" — %s", snap.Error.Message)
+	}
+	fmt.Printf(" (%d attempt(s))\n", snap.Attempt)
+
+	// A run that ends anywhere but complete is a failure for scripting purposes,
+	// so the exit code has to say so.
+	if snap.State != session.StateComplete {
+		return fmt.Errorf("run did not complete")
+	}
+	return nil
+}
+
+// describe renders one event as a line, or "" for the ones not worth printing.
+func describe(ev session.Event) string {
+	switch ev.Kind {
+	case session.EvStoryStarted:
+		return fmt.Sprintf("▶  %s  %s", ev.StoryID, ev.Text)
+	case session.EvStoryDone:
+		return fmt.Sprintf("✓  %s  %s", ev.StoryID, ev.Text)
+	case session.EvStorySkipped:
+		return fmt.Sprintf("—  %s  %s", ev.StoryID, ev.Text)
+	case session.EvStoryFailed:
+		return fmt.Sprintf("✗  %s  %s", ev.StoryID, ev.Text)
+	case session.EvStoryAttempt:
+		return fmt.Sprintf("↻  %s  %s", ev.StoryID, ev.Text)
+	case session.EvGit:
+		if ev.Git == nil || ev.Git.State == "running" {
+			return ""
+		}
+		return fmt.Sprintf("git %s %s: %s", ev.Git.Op, ev.Git.State, ev.Text)
+	case session.EvAgentWatchdog:
+		return "⏱  the agent went quiet and was restarted"
+	case session.EvRunError:
+		return fmt.Sprintf("✗  %s", ev.Text)
+	case session.EvRunComplete:
+		return "🎉 all stories complete"
+	default:
+		return ""
+	}
 }
 
 func doctor(s *session.Session, asJSON bool) error {

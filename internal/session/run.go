@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dripcoder/loop/internal/agentx"
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
 	"github.com/dripcoder/loop/internal/chief/prd"
 )
@@ -47,7 +48,7 @@ type run struct {
 	prdPath string
 	workDir string
 
-	provider chiefloop.Provider
+	provider *agentx.GroupLeader
 	sess     *Session
 
 	mu       sync.Mutex
@@ -552,6 +553,10 @@ func (s *Session) Stop(runID string) error {
 	if active != nil {
 		active.Stop()
 	}
+	// Then the process group. Loop.Stop kills only the agent itself; anything it
+	// spawned would keep the output pipe open and leave the attempt blocked in
+	// cmd.Wait, which is exactly the hang a user pressing Stop is trying to end.
+	r.provider.Kill()
 	r.cancel()
 	return nil
 }
