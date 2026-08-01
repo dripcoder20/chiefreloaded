@@ -59,14 +59,16 @@ fi
 echo
 echo "Agent CLIs"
 found_agent=0
-for agent in claude codex opencode cursor gemini; do
+# The set supported by the vendored chief v0.8.0. Gemini exists upstream but
+# landed after the tag; add it here when sync-upstream picks it up.
+for agent in claude codex opencode cursor; do
   if command -v "$agent" >/dev/null; then
     pass "$agent" "$(command -v "$agent")"
     found_agent=1
   fi
 done
 if [[ "$found_agent" == "0" ]]; then
-  hard "agent" "none found — install at least one of claude, codex, opencode, cursor, gemini"
+  hard "agent" "none found — install at least one of claude, codex, opencode, cursor"
 fi
 
 echo

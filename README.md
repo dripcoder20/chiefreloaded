@@ -24,7 +24,9 @@ switch between the two on the same project.
 - Node 20+
 - [`wails3`](https://v3.wails.io) (pinned — see `Taskfile.yml`)
 - `git`, and `gh` 2.0+ for pull-request features
-- A coding agent CLI: Claude Code, Codex, OpenCode, Cursor, or Gemini
+- A coding agent CLI: Claude Code, Codex, OpenCode, or Cursor
+  (chief v0.8.0 ships these four; Gemini landed upstream after the tag and
+  arrives with a future `task sync-upstream`)
 - For stacked PRs: `gh extension install github/gh-stack`
 
 ## Development
