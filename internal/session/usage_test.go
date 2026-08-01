@@ -274,6 +274,74 @@ func TestUsageAcrossRetriesCountsEveryAttempt(t *testing.T) {
 	}
 }
 
+// A fresh snapshot must equal the totals obtained by applying every accepted
+// usage event, and replaying those events before live delivery must never double
+// count — the two properties that keep a reconnecting status bar correct.
+func TestUsageSnapshotEqualsAppliedEventsAndReplayDoesNotDoubleCount(t *testing.T) {
+	s, _, runID := startRun(t, oneStoryPRD,
+		fakeagent.Behaviour{
+			Text:     "try 1",
+			Usage:    &fakeagent.Usage{InputTokens: 100, OutputTokens: 10, CostUSD: 0.01},
+			ExitCode: 1, // crash after reporting usage, to emit a second event on retry
+		},
+		fakeagent.Behaviour{
+			Text: "try 2", WriteFile: "o.txt", FileBody: "x", Commit: true, Done: true,
+			Usage: &fakeagent.Usage{InputTokens: 200, OutputTokens: 20, CostUSD: 0.02},
+		},
+	)
+
+	snap := waitFor(t, s, runID)
+	if snap.State != StateComplete {
+		t.Fatalf("state = %s, want complete (err %+v)", snap.State, snap.Error)
+	}
+
+	// Every accepted usage record travels on the ordered event stream. Fresh
+	// snapshot totals must equal the totals rebuilt from those events alone.
+	records := acceptedUsageRecords(t, s)
+	if len(records) != 2 {
+		t.Fatalf("accepted usage events = %d, want 2 (the crash and its retry)", len(records))
+	}
+	applied := buildReport(records)
+	fresh := s.Snapshot().Usage
+	if applied.Project != fresh.Project {
+		t.Errorf("applying the events gives %+v, snapshot has %+v", applied.Project, fresh.Project)
+	}
+	if applied.Runs[runID] != fresh.Runs[runID] {
+		t.Errorf("session total from events %+v differs from snapshot %+v",
+			applied.Runs[runID], fresh.Runs[runID])
+	}
+
+	// Replay-then-live: re-delivering the very same events (a reconnect that
+	// replays and then keeps receiving) must not inflate any aggregate.
+	l := newUsageLedger()
+	for _, rec := range records {
+		l.add(rec)
+	}
+	for _, rec := range records { // the "live" re-delivery of already-seen keys
+		l.add(rec)
+	}
+	if got := l.report().Project; got != fresh.Project {
+		t.Errorf("replay + live double counted: %+v, want %+v", got, fresh.Project)
+	}
+}
+
+// acceptedUsageRecords returns every usage record the session accepted, read back
+// from the ordered event stream in delivery order.
+func acceptedUsageRecords(t *testing.T, s *Session) []UsageRecord {
+	t.Helper()
+	evs, complete := s.Replay(0)
+	if !complete {
+		t.Fatal("replay is incomplete; the retention ring rolled")
+	}
+	var records []UsageRecord
+	for i := range evs {
+		if evs[i].Kind == EvUsage && evs[i].Usage != nil {
+			records = append(records, *evs[i].Usage)
+		}
+	}
+	return records
+}
+
 // latestUsageReport returns the report carried on the most recent usage event.
 func latestUsageReport(t *testing.T, s *Session) UsageReport {
 	t.Helper()

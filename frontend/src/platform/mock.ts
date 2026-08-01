@@ -128,6 +128,224 @@ let run: RunSnapshot = {
   pendingGitErrors: 0,
 } as RunSnapshot;
 
+// ------------------------------------------------------------------- usage --
+//
+// Browser development needs usage that looks like a real project's history, not
+// a single tidy row. Two things have to be visible to exercise the status bar:
+// historical usage from a finished run and live usage streaming into the active
+// one, and both a fully supported provider (claude — every token class plus
+// cost) and a partially supported one (codex — input/cache/output only, no
+// reasoning, no cache-write, no cost). A partial provider is not an error state;
+// the UI must render "cost unknown" without falling over.
+//
+// The report is always rebuilt from the record list with buildUsageReport, the
+// same absolute-total invariant the Go ledger keeps: a reconnecting consumer
+// adopts the numbers wholesale and a replayed event re-adopts them rather than
+// adding, so nothing is ever double counted.
+
+type UsageTotals = {
+  records: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cost: number;
+  currency: string;
+};
+
+type UsageRecord = {
+  key: string;
+  runId: string;
+  prd?: string;
+  storyId?: string;
+  attempt: number;
+  provider?: string;
+  model?: string;
+  at: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
+  cost?: number;
+  currency?: string;
+};
+
+type UsageReport = {
+  project: UsageTotals;
+  runs: Record<string, UsageTotals>;
+  stories: Record<string, UsageTotals>;
+  attempts: Record<string, UsageTotals>;
+};
+
+function emptyTotals(): UsageTotals {
+  return {
+    records: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    cost: 0,
+    currency: "",
+  };
+}
+
+/** recordTotal derives a record's token count the way the Go ledger does: the
+ *  reported total when present, otherwise the sum of the reported components. */
+function recordTotal(rec: UsageRecord): number {
+  if (rec.totalTokens != null) return rec.totalTokens;
+  return (
+    (rec.inputTokens ?? 0) +
+    (rec.outputTokens ?? 0) +
+    (rec.reasoningTokens ?? 0) +
+    (rec.cacheReadTokens ?? 0) +
+    (rec.cacheWriteTokens ?? 0)
+  );
+}
+
+function foldRecord(t: UsageTotals, rec: UsageRecord): void {
+  t.records += 1;
+  t.inputTokens += rec.inputTokens ?? 0;
+  t.outputTokens += rec.outputTokens ?? 0;
+  t.reasoningTokens += rec.reasoningTokens ?? 0;
+  t.cacheReadTokens += rec.cacheReadTokens ?? 0;
+  t.cacheWriteTokens += rec.cacheWriteTokens ?? 0;
+  t.totalTokens += recordTotal(rec);
+  if (rec.cost != null) t.cost += rec.cost;
+  if (t.currency === "" && rec.currency) t.currency = rec.currency;
+}
+
+function accumulate(m: Record<string, UsageTotals>, key: string, rec: UsageRecord): void {
+  const totals = m[key] ?? emptyTotals();
+  foldRecord(totals, rec);
+  m[key] = totals;
+}
+
+/** buildUsageReport rebuilds the absolute roll-up from the ordered record set,
+ *  mirroring the Go ledger so the mock stays faithful to the real invariant. */
+function buildUsageReport(records: UsageRecord[]): UsageReport {
+  const report: UsageReport = { project: emptyTotals(), runs: {}, stories: {}, attempts: {} };
+  for (const rec of records) {
+    foldRecord(report.project, rec);
+    accumulate(report.runs, rec.runId, rec);
+    if (!rec.storyId) continue;
+    accumulate(report.stories, `${rec.runId}/${rec.storyId}`, rec);
+    accumulate(report.attempts, `${rec.runId}/${rec.storyId}#${rec.attempt}`, rec);
+  }
+  return report;
+}
+
+const HOUR = 3_600_000;
+
+// A finished run on a different PRD, driven by codex — a partially supported
+// provider that reports input, cached-input and output tokens but no reasoning,
+// no cache-write and no cost. Its currency stays empty on purpose.
+const historicalUsage: UsageRecord[] = [
+  {
+    key: "run_prev/US-006#1:0",
+    runId: "run_prev",
+    prd: "docs-site",
+    storyId: "US-006",
+    attempt: 1,
+    provider: "codex",
+    model: "gpt-5-codex",
+    at: Date.now() - 5 * HOUR,
+    inputTokens: 8_200,
+    outputTokens: 1_400,
+    cacheReadTokens: 16_000,
+  },
+  {
+    key: "run_prev/US-007#1:0",
+    runId: "run_prev",
+    prd: "docs-site",
+    storyId: "US-007",
+    attempt: 1,
+    provider: "codex",
+    model: "gpt-5-codex",
+    at: Date.now() - 4 * HOUR,
+    inputTokens: 9_100,
+    outputTokens: 1_750,
+    cacheReadTokens: 21_000,
+  },
+  // The active run so far, driven by claude — every token class plus a reported
+  // cost. US-001 is done; US-002 has already burned three attempts.
+  {
+    key: "run_1/US-001#1:0",
+    runId: "run_1",
+    prd: "checkout",
+    storyId: "US-001",
+    attempt: 1,
+    provider: "claude",
+    model: "claude-opus-4",
+    at: Date.now() - 3 * HOUR,
+    inputTokens: 22_000,
+    outputTokens: 2_600,
+    cacheReadTokens: 65_000,
+    cacheWriteTokens: 4_500,
+    cost: 0.31,
+    currency: "USD",
+  },
+  {
+    key: "run_1/US-002#1:0",
+    runId: "run_1",
+    prd: "checkout",
+    storyId: "US-002",
+    attempt: 1,
+    provider: "claude",
+    model: "claude-opus-4",
+    at: Date.now() - 2 * HOUR,
+    inputTokens: 18_000,
+    outputTokens: 2_100,
+    cacheReadTokens: 52_000,
+    cacheWriteTokens: 3_800,
+    cost: 0.24,
+    currency: "USD",
+  },
+  {
+    key: "run_1/US-002#2:0",
+    runId: "run_1",
+    prd: "checkout",
+    storyId: "US-002",
+    attempt: 2,
+    provider: "claude",
+    model: "claude-opus-4",
+    at: Date.now() - 90 * 60_000,
+    inputTokens: 15_500,
+    outputTokens: 1_800,
+    cacheReadTokens: 47_000,
+    cacheWriteTokens: 3_100,
+    cost: 0.2,
+    currency: "USD",
+  },
+  {
+    key: "run_1/US-002#3:0",
+    runId: "run_1",
+    prd: "checkout",
+    storyId: "US-002",
+    attempt: 3,
+    provider: "claude",
+    model: "claude-opus-4",
+    at: Date.now() - 30 * 60_000,
+    inputTokens: 16_800,
+    outputTokens: 1_950,
+    cacheReadTokens: 49_000,
+    cacheWriteTokens: 3_300,
+    cost: 0.22,
+    currency: "USD",
+  },
+];
+
+// Every usage record the mock has accepted, in delivery order. The scripted run
+// appends attempt-4 payloads to it, so both the snapshot and each live event
+// report the same absolute roll-up.
+const usageRecords: UsageRecord[] = [...historicalUsage];
+let usageSeq = 0;
+
 const environment: Environment = {
   git: { name: "git", available: true, version: "2.50.1" },
   gh: { name: "gh", available: true, version: "2.68.0" },
@@ -168,7 +386,41 @@ setInterval(() => {
   if (run.state !== "running") return;
   emit(script[tick % script.length]);
   tick++;
+  // Every few log lines the active attempt reports usage. It accumulates onto
+  // the record set, so each event carries the fresh absolute roll-up.
+  if (tick % 3 === 0) emitUsage();
 }, 900);
+
+/** emitUsage streams one attempt-4 usage payload for the active claude run and
+ *  publishes the absolute roll-up rebuilt from every accepted record. */
+function emitUsage(): void {
+  const rec: UsageRecord = {
+    key: `run_1/US-002#4:${usageSeq++}`,
+    runId: "run_1",
+    prd: "checkout",
+    storyId: "US-002",
+    attempt: 4,
+    provider: "claude",
+    model: "claude-opus-4",
+    at: Date.now(),
+    inputTokens: 2_400 + usageSeq * 40,
+    outputTokens: 260 + usageSeq * 6,
+    cacheReadTokens: 7_000 + usageSeq * 30,
+    cacheWriteTokens: 500 + usageSeq * 5,
+    cost: 0.03,
+    currency: "USD",
+  };
+  usageRecords.push(rec);
+  emit({
+    kind: EventKind.EvUsage,
+    prd: "checkout",
+    runId: "run_1",
+    storyId: "US-002",
+    attempt: 4,
+    usage: rec,
+    usageReport: buildUsageReport(usageRecords),
+  } as never);
+}
 
 const authorListeners: Array<(ev: { sessionId: string; data: string }) => void> = [];
 
@@ -289,6 +541,7 @@ export const mockApi = {
         runs: [run],
         questions: [] as Question[],
         environment,
+        usage: buildUsageReport(usageRecords),
       }) as Snapshot,
     replay: async () => ({ events: [], complete: true }) as never,
     answer: async (): Promise<void> => {},
