@@ -49,7 +49,7 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 | Story detail / criteria | `dashboard.go:451` | done | Plus the "auto-ticked, not verified" caveat chief lacks. |
 | PRD picker | `picker.go` | partial | A permanent rail rather than a modal. Switch works; create/delete do not. |
 | Tab bar | `tabbar.go` | n/a | The rail is the same list; rendering it twice was a terminal workaround. |
-| Log view | `log.go` | partial | Streams with colour-coded rows and auto-scroll. No syntax highlighting, no search, not yet virtualised. |
+| Log view | `log.go` | partial | A resizable bottom panel rather than a view you switch to. Streams with colour-coded rows and auto-scroll. No syntax highlighting, no search, not yet virtualised. |
 | Diff view | `diff.go` | todo | |
 | Settings | `settings.go` | done | Exceeds chief: exposes the agent provider and the git mode it has no field for. |
 | Help overlay | `help.go` | partial | Key hints in the status bar; no palette or overlay. |
@@ -64,6 +64,10 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 
 ## Deliberate departures
 
+- **The log is a panel, not a view.** chief makes the log and the dashboard
+  alternatives, so you are always on the wrong one. Watching the agent and
+  watching the stories tick over are the same activity. Along the bottom rather
+  than in a sidebar because agent output is wide.
 - **The PRD list is navigation, not a modal.** chief hides it behind `l` while
   filling it with live state you are meant to watch. Those two facts contradict
   each other in a terminal; here they do not have to.

@@ -15,7 +15,7 @@
   import PrdRail from "./shell/PrdRail.svelte";
   import Inspector from "./shell/Inspector.svelte";
   import StoryList from "./views/StoryList.svelte";
-  import LogView from "./views/LogView.svelte";
+  import LogPanel from "./views/LogPanel.svelte";
   import Settings from "./views/Settings.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
 
@@ -24,8 +24,12 @@
     return disconnect;
   });
 
+  let logPanel = $state<ReturnType<typeof LogPanel> | null>(null);
+
   const run = $derived(app.currentRun);
-  const state = $derived(run?.state ?? "idle");
+  // Named runState, not state: a local called `state` shadows the $state rune
+  // and every $state() call in the component silently becomes store access.
+  const runState = $derived(run?.state ?? "idle");
 
   const elapsed = $derived.by(() => {
     if (!run?.startedAt) return "";
@@ -54,7 +58,7 @@
 
     switch (e.key) {
       case "s":
-        state === "paused" ? void resumeRun() : void startRun();
+        runState === "paused" ? void resumeRun() : void startRun();
         break;
       case "p":
         void pauseRun();
@@ -63,7 +67,7 @@
         void stopRun();
         break;
       case "t":
-        app.view = app.view === "log" ? "stories" : "log";
+        logPanel?.toggle();
         break;
       case ",":
         app.view = app.view === "settings" ? "stories" : "settings";
@@ -144,7 +148,7 @@
 
     <main class="centre">
       <div class="toolbar">
-        <span class="badge {state}">{state}</span>
+        <span class="badge {runState}">{runState}</span>
 
         {#if run}
           <span class="tnum meta">attempt {run.attempt}/{run.attemptBudget}</span>
@@ -160,11 +164,11 @@
 
         <span class="spacer"></span>
 
-        <button onclick={() => (state === "paused" ? resumeRun() : startRun())}>
-          {state === "paused" ? "Resume" : "Start"}
+        <button onclick={() => (runState === "paused" ? resumeRun() : startRun())}>
+          {runState === "paused" ? "Resume" : "Start"}
         </button>
-        <button onclick={pauseRun} disabled={state !== "running"}>Pause</button>
-        <button onclick={stopRun} disabled={state !== "running" && state !== "paused"}>
+        <button onclick={pauseRun} disabled={runState !== "running"}>Pause</button>
+        <button onclick={stopRun} disabled={runState !== "running" && runState !== "paused"}>
           Stop
         </button>
       </div>
@@ -175,12 +179,6 @@
           aria-selected={app.view === "stories"}
           class:on={app.view === "stories"}
           onclick={() => (app.view = "stories")}>Stories</button
-        >
-        <button
-          role="tab"
-          aria-selected={app.view === "log"}
-          class:on={app.view === "log"}
-          onclick={() => (app.view = "log")}>Log</button
         >
         <button
           role="tab"
@@ -220,12 +218,14 @@
               <button onclick={pickProject}>Choose a project…</button>
             </div>
           </div>
-        {:else if app.view === "stories"}
-          <StoryList />
         {:else}
-          <LogView />
+          <StoryList />
         {/if}
       </div>
+
+      <!-- Always present, not a view you switch to: watching the agent and
+           watching the stories tick over are the same activity. -->
+      <LogPanel bind:this={logPanel} />
     </main>
 
     <Inspector />

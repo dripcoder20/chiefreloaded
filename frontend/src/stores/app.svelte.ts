@@ -23,7 +23,7 @@ import { ingest } from "./logs.svelte";
  * to sequence-number events.
  */
 
-export type View = "stories" | "log" | "author" | "settings";
+export type View = "stories" | "author" | "settings";
 
 class AppState {
   project = $state<Project | null>(null);

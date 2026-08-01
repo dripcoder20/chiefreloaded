@@ -34,10 +34,32 @@ let frame: number | null = null;
 /** The single signal every derived read depends on. */
 let version = $state(0);
 
+/**
+ * How many events may wait for a flush.
+ *
+ * Needed because rAF does not fire while the window is hidden — which is the
+ * backpressure this design wants, but it means a minimised window during a long
+ * run would otherwise grow this queue for as long as the run lasts. Anything
+ * beyond the cap is older than the ring would keep anyway.
+ */
+const PENDING_CAP = CAP;
+
 /** Queue a batch. Cheap: no reactivity is touched here. */
 export function ingest(events: LoopEvent[]): void {
   if (events.length === 0) return;
   pending.push(...events);
+
+  if (pending.length > PENDING_CAP) {
+    const over = pending.length - PENDING_CAP;
+    // Count the discards so the log still admits it is incomplete rather than
+    // presenting a gap as continuous output.
+    for (const ev of pending.slice(0, over)) {
+      const key = ev.prd || "";
+      dropped.set(key, (dropped.get(key) ?? 0) + 1);
+    }
+    pending.splice(0, over);
+  }
+
   scheduleFlush();
 }
 
