@@ -1,0 +1,1 @@
+[stderr] 2026-08-01T17:31:29.047857Z ERROR codex_models_manager::cache: failed to load models cache: missing field `supports_reasoning_summaries` at line 87 column 5

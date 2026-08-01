@@ -1,0 +1,16 @@
+worktree:
+    setup: ""
+onComplete:
+    push: false
+    createPR: false
+agent:
+    provider: claude
+    cliPath: ""
+git:
+    mode: per-story
+    stackDriver: auto
+    baseBranch: ""
+    branchTemplate: feature/{prd}/{story}-{slug}
+    draft: true
+    requireWorktree: false
+    verifyCommit: true
