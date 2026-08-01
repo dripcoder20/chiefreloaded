@@ -1,0 +1,19 @@
+# Build output
+.task
+bin
+frontend/dist
+frontend/node_modules
+
+# Wails-generated TypeScript bindings
+frontend/bindings
+
+# Wails platform build artefacts
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+
+# Go
+*.test
+*.out
+coverage.*
+
+.DS_Store

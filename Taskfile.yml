@@ -1,0 +1,149 @@
+version: "3"
+
+vars:
+  APP_NAME: "loop"
+  BIN_DIR: "bin"
+  PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Target OS for build/package/run. Defaults to the host OS, and is overridden
+  # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation.
+  GOOS: '{{.GOOS | default OS}}'
+
+  # Pinned deliberately. Wails v3 is alpha and its nightlies move daily; treat
+  # bumping this as scheduled work, not a drive-by.
+  WAILS_VERSION: v3.0.0-alpha2.121
+
+# Desktop only. The iOS/Android scaffolding from the Wails template was removed:
+# Loop drives git and agent CLIs as subprocesses, so it cannot run on mobile.
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+
+tasks:
+  default:
+    cmds: [task: --list]
+
+  # ------------------------------------------------------------------ setup --
+
+  setup:
+    desc: Install pinned tooling and sync the vendored chief tree
+    cmds:
+      - go install github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}}
+      - git submodule update --init --recursive
+      - task: sync-upstream
+      - wails3 doctor
+
+  doctor:
+    desc: Check the local toolchain
+    cmds:
+      - wails3 doctor
+      - ./scripts/doctor.sh
+
+  # ---------------------------------------------------------------- develop --
+
+  dev:
+    desc: Run the app with Go hot-reload and Vite HMR
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  build:
+    desc: Build the desktop binary
+    cmds:
+      - task: "{{.GOOS}}:build"
+
+  package:
+    desc: Package a distributable (.app / .dmg / .exe)
+    cmds:
+      - task: "{{.GOOS}}:package"
+
+  run:
+    desc: Run the built application
+    cmds:
+      - task: "{{.GOOS}}:run"
+
+  bindings:
+    desc: Regenerate TypeScript bindings from the Go services
+    cmds:
+      - wails3 generate bindings -ts
+
+  # ----------------------------------------------------------------- vendor --
+
+  sync-upstream:
+    desc: 'Regenerate internal/chief/ from the submodule. Usage: task sync-upstream -- v0.9.0'
+    cmds:
+      - ./scripts/sync-upstream.sh {{.CLI_ARGS}}
+
+  verify-vendor:
+    desc: Fail if internal/chief/ has drifted from a fresh sync (CI gate)
+    cmds:
+      - ./scripts/sync-upstream.sh --check
+
+  # ------------------------------------------------------------------ check --
+
+  test:
+    desc: Run all Go tests, including chief's own upstream suite
+    cmds:
+      - go test ./...
+
+  test-race:
+    desc: Race detector over the concurrency-heavy packages
+    cmds:
+      - go test -race ./internal/session/... ./internal/ghstack/... ./internal/authoring/...
+
+  e2e:
+    desc: Drive loopctl against a scripted fake agent in a throwaway git repo
+    cmds:
+      - go test -tags e2e -count=1 ./e2e/...
+
+  integration:
+    desc: Stacked-PR tests against a real GitHub scratch repo (needs gh auth)
+    cmds:
+      - go test -tags integration -count=1 ./internal/ghstack/...
+
+  check:frontend:
+    desc: Type-check the Svelte frontend
+    dir: frontend
+    cmds:
+      - '{{.PACKAGE_MANAGER}} run check'
+
+  lint:
+    desc: Vet everything except the vendored tree
+    cmds:
+      - go vet $(go list ./... | grep -v /internal/chief/)
+
+  fmt:
+    desc: Format our Go source (never the vendored tree)
+    cmds:
+      - gofmt -l -w $(git ls-files '*.go' | grep -v '^internal/chief/')
+
+  ci:
+    desc: Everything CI runs
+    cmds:
+      - task: verify-vendor
+      - task: lint
+      - task: test
+      - task: test-race
+
+  # ------------------------------------------------------- server (headless) --
+
+  setup:docker:
+    summary: Builds Docker image for cross-compilation (~800MB download)
+    cmds: [task: common:setup:docker]
+
+  build:server:
+    summary: Builds the application in server mode (no GUI, HTTP server only)
+    cmds: [task: common:build:server]
+
+  run:server:
+    summary: Runs the application in server mode
+    cmds: [task: common:run:server]
+
+  build:docker:
+    summary: Builds a Docker image for server mode deployment
+    cmds: [task: common:build:docker]
+
+  run:docker:
+    summary: Builds and runs the Docker image
+    cmds: [task: common:run:docker]

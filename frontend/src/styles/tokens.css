@@ -1,0 +1,119 @@
+/*
+ * Design tokens.
+ *
+ * Colour is authored in OKLCH so the semantic set can share a lightness and
+ * chroma and vary only in hue. chief's TUI palette does not: its green is far
+ * brighter than its red, which makes errors read *quieter* than successes.
+ * Equalising that is the point of this layer, not a repaint.
+ *
+ * WebKitGTK support for oklch() is uneven, so every colour token has an sRGB
+ * fallback declared first. Browsers that understand oklch() take the second
+ * declaration; those that don't keep the first.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- typography ---------------------------------------------------- */
+  --font-ui: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono NL", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* ---- neutral ramp (cool cast, very low chroma) ---------------------- */
+  --n-0: #17181c;  /* app background   */
+  --n-1: #1d1e23;  /* panel            */
+  --n-2: #24262c;  /* raised / hover   */
+  --n-3: #2e3038;  /* strong border    */
+  --n-4: #4a4d57;  /* muted foreground */
+  --n-6: #a8acb8;  /* secondary text   */
+  --n-8: #e9eaee;  /* primary text     */
+
+  /* ---- semantics ------------------------------------------------------ */
+  --accent: #59c2e0;  /* cyan  — active / brand */
+  --ok: #4fca8b;      /* green — passed         */
+  --warn: #dfae4e;    /* amber — paused         */
+  --danger: #e8705e;  /* red   — error          */
+  --info: #8ba4f0;
+}
+
+@supports (color: oklch(0.5 0.1 250)) {
+  :root {
+    --n-0: oklch(0.16 0.012 265);
+    --n-1: oklch(0.19 0.012 265);
+    --n-2: oklch(0.23 0.013 265);
+    --n-3: oklch(0.28 0.014 265);
+    --n-4: oklch(0.40 0.012 265);
+    --n-6: oklch(0.72 0.010 265);
+    --n-8: oklch(0.93 0.006 265);
+
+    /* Equal L and C across the semantic set — only the hue moves. */
+    --accent: oklch(0.78 0.13 215);
+    --ok: oklch(0.78 0.15 152);
+    --warn: oklch(0.82 0.13 85);
+    --danger: oklch(0.68 0.18 25);
+    --info: oklch(0.74 0.11 275);
+  }
+}
+
+/* ---- role aliases ----------------------------------------------------- */
+:root {
+  --bg-app: var(--n-0);
+  --bg-panel: var(--n-1);
+  --bg-raised: var(--n-2);
+  --border: var(--n-3);
+  --fg-1: var(--n-8);
+  --fg-2: var(--n-6);
+  --fg-3: var(--n-4);
+
+  --radius-control: 4px;
+  --radius-card: 6px;
+  --radius-modal: 10px;
+
+  /* Motion means work is happening. Nothing in the log or diff animates. */
+  --dur-hover: 120ms;
+  --dur-panel: 180ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --n-0: #ffffff;
+  --n-1: #f7f7f9;
+  --n-2: #eeeff2;
+  --n-3: #dcdee4;
+  --n-4: #767a86;
+  --n-6: #43464f;
+  --n-8: #16171b;
+
+  --accent: #1178a0;
+  --ok: #17794c;
+  --warn: #8a6100;
+  --danger: #b8351f;
+  --info: #3f52a8;
+}
+
+@supports (color: oklch(0.5 0.1 250)) {
+  :root[data-theme="light"] {
+    --n-0: oklch(1 0 0);
+    --n-1: oklch(0.975 0.003 265);
+    --n-2: oklch(0.945 0.005 265);
+    --n-3: oklch(0.89 0.007 265);
+    --n-4: oklch(0.56 0.012 265);
+    --n-6: oklch(0.36 0.012 265);
+    --n-8: oklch(0.17 0.012 265);
+
+    /* Darker and slightly more chromatic so contrast holds on white. */
+    --accent: oklch(0.55 0.13 215);
+    --ok: oklch(0.55 0.15 152);
+    --warn: oklch(0.55 0.13 85);
+    --danger: oklch(0.52 0.18 25);
+    --info: oklch(0.52 0.14 275);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-hover: 0ms;
+    --dur-panel: 0ms;
+  }
+}

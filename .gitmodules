@@ -1,0 +1,4 @@
+[submodule "third_party/chief"]
+	path = third_party/chief
+	url = https://github.com/MiniCodeMonkey/chief.git
+	branch = main
