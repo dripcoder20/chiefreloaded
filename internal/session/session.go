@@ -393,6 +393,9 @@ func (s *Session) SaveLoopConfig(cfg config.LoopConfig) error {
 		return err
 	}
 	cfg.Normalise()
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid settings: %w", err)
+	}
 	if err := config.SaveLoop(root, &cfg); err != nil {
 		return fmt.Errorf("save .chief/config.yaml: %w", err)
 	}

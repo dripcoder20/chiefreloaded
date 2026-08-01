@@ -480,7 +480,9 @@ function emitUsage(): void {
     provider: "claude",
     model: "claude-opus-4",
     at: Date.now(),
-    inputTokens: 2_400 + usageSeq * 40,
+    // The payload footprint climbs toward the 200k window so browser dev walks
+    // through the healthy → warning (80%) → critical (95%) states over time.
+    inputTokens: 120_000 + usageSeq * 8_000,
     outputTokens: 260 + usageSeq * 6,
     cacheReadTokens: 7_000 + usageSeq * 30,
     cacheWriteTokens: 500 + usageSeq * 5,
@@ -573,6 +575,11 @@ export const mockApi = {
           draft: true,
           requireWorktree: true,
           verifyCommit: true,
+        },
+        usage: {
+          contextWarnPercent: 80,
+          contextCriticalPercent: 95,
+          costWarnAmount: 5,
         },
       }) as never,
     saveConfig: async (): Promise<void> => {},

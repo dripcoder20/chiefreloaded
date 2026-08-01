@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { app, type UsageGroup, type UsageTotals } from "../stores/app.svelte";
+  import {
+    app,
+    contextLevel,
+    contextUtilization,
+    costLevel,
+    type UsageGroup,
+    type UsageTotals,
+    type WarnLevel,
+  } from "../stores/app.svelte";
 
   /**
    * Detailed usage panel. It opens over the current view — the run keeps going
@@ -97,9 +105,14 @@
     return g.provider || "unknown provider";
   }
 
-  type Cell = { available: boolean; text: string; label: string };
+  // level marks a cell that has crossed a configured warning threshold. It is only
+  // ever set where the underlying value is genuinely known, so an unavailable cell
+  // (unknown window, quota or cost) never carries a warning.
+  type Cell = { available: boolean; text: string; label: string; level?: WarnLevel };
 
   const UNAVAILABLE = "—"; // em dash
+
+  const thresholds = $derived(app.thresholds);
 
   // A token class that never appeared in the group sums to zero; we surface that
   // as unavailable with the provider named, rather than a misleading "0".
@@ -118,11 +131,13 @@
     if (!g.hasCost) {
       return unavailable(`${providerLabel(g)}: no cost reported`);
     }
-    return {
-      available: true,
-      text: money(g.currency ?? "", g.cost),
-      label: `cost: ${money(g.currency ?? "", g.cost)}`,
-    };
+    const amount = money(g.currency ?? "", g.cost);
+    const level = costLevel(
+      { currency: g.currency ?? "", cost: g.cost } as UsageTotals,
+      thresholds,
+    );
+    const over = level === "warn" ? " — over the configured warning amount" : "";
+    return { available: true, text: amount, label: `cost: ${amount}${over}`, level };
   }
 
   // Reported vs estimated is a required distinction: an estimate must never read
@@ -156,11 +171,15 @@
     if (peak <= 0) {
       return unavailable(`${providerLabel(g)}: no payload size to compare`);
     }
-    const ratio = peak / window;
+    const ratio = contextUtilization(g) ?? peak / window;
+    const level = contextLevel(ratio, thresholds);
+    const suffix =
+      level === "critical" ? " — critical" : level === "warn" ? " — warning" : "";
     return {
       available: true,
       text: pctFmt.format(ratio),
-      label: `context utilization: ${pctFmt.format(ratio)} of ${fullFmt.format(window)} tokens`,
+      label: `context utilization: ${pctFmt.format(ratio)} of ${fullFmt.format(window)} tokens${suffix}`,
+      level,
     };
   }
 
@@ -303,9 +322,14 @@
                   <span
                     class="v"
                     class:muted={!row.cell.available}
+                    class:warn={row.cell.level === "warn"}
+                    class:critical={row.cell.level === "critical"}
                     title={row.cell.label}
                     aria-label={row.cell.label}
                   >
+                    {#if row.cell.level === "warn" || row.cell.level === "critical"}
+                      <span class="warn-icon" aria-hidden="true">⚠</span>
+                    {/if}
                     {row.cell.text}
                     {#if row.tag}<em class="tag">{row.tag}</em>{/if}
                   </span>
@@ -315,6 +339,11 @@
           </section>
         {/each}
       {/if}
+
+      <p class="footnote">
+        Provider account quotas, subscription balances and rate limits are not reported to
+        Loop and are shown as unavailable — they never trigger a warning.
+      </p>
     </div>
   </div>
 </div>
@@ -416,6 +445,14 @@
     font-size: 12px;
   }
 
+  .footnote {
+    margin: 16px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-3);
+    font-size: 11px;
+  }
+
   .group + .group {
     margin-top: 14px;
     padding-top: 12px;
@@ -467,6 +504,18 @@
   .v.muted {
     color: var(--fg-3);
     opacity: 0.7;
+  }
+  /* Warning colour is always paired with the ⚠ icon and a descriptive label, so
+     the state is never conveyed by colour alone. */
+  .v.warn {
+    color: var(--warn);
+  }
+  .v.critical {
+    color: var(--danger);
+  }
+  .warn-icon {
+    margin-right: 3px;
+    font-size: 11px;
   }
   .tag {
     margin-left: 6px;

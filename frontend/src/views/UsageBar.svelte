@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { RunSnapshot } from "../platform";
-  import type { UsageTotals } from "../stores/app.svelte";
+  import {
+    app,
+    costLevel,
+    worstContext,
+    type UsageTotals,
+    type WarnLevel,
+  } from "../stores/app.svelte";
   import UsagePanel from "./UsagePanel.svelte";
 
   /**
@@ -91,6 +97,38 @@
   const storyTokens = $derived(tokenField(story, "current story"));
   const sessionTokens = $derived(tokenField(session, "current session"));
   const sessionCost = $derived(costField(session));
+
+  // Warnings are informational only — they highlight, never pause or stop a run.
+  // Context utilization is computed only where a model window is known, so an
+  // unknown quota or window produces no warning rather than a false one.
+  const pctFmt = new Intl.NumberFormat(undefined, {
+    style: "percent",
+    maximumFractionDigits: 0,
+  });
+
+  const sessionContext = $derived(worstContext(session, app.thresholds));
+  const costWarn = $derived(costLevel(session, app.thresholds));
+
+  // The cost value is styled at the cost warning level; a breach never rises past
+  // "warn" because an over-budget session is a heads-up, not a hard limit.
+  const costState = $derived<WarnLevel>(sessionCost.available ? costWarn : "none");
+
+  type Badge = { level: WarnLevel; text: string; label: string };
+
+  // A single context badge for the status bar, present only when a threshold is
+  // crossed. The icon and text carry the meaning; colour merely reinforces it.
+  const contextBadge = $derived<Badge | null>(badgeFor(sessionContext));
+
+  function badgeFor(ctx: { level: WarnLevel; ratio: number | null }): Badge | null {
+    if (ctx.level === "none" || ctx.ratio == null) return null;
+    const pct = pctFmt.format(ctx.ratio);
+    const word = ctx.level === "critical" ? "critical" : "warning";
+    return {
+      level: ctx.level,
+      text: `${pct} context`,
+      label: `Context ${word}: session context is at ${pct} of the model window`,
+    };
+  }
 </script>
 
 {#if run}
@@ -120,10 +158,28 @@
         </span>
         <span class="pair">
           <span class="k">cost</span>
-          <span class="v" class:muted={!sessionCost.available} aria-label={sessionCost.label}>
+          <span
+            class="v"
+            class:muted={!sessionCost.available}
+            class:warn={costState === "warn"}
+            aria-label={costState === "warn"
+              ? `${sessionCost.label} — over the configured warning amount`
+              : sessionCost.label}
+          >
             {sessionCost.text}
           </span>
         </span>
+        {#if contextBadge}
+          <span
+            class="badge"
+            class:warn={contextBadge.level === "warn"}
+            class:critical={contextBadge.level === "critical"}
+            aria-label={contextBadge.label}
+          >
+            <span class="badge-icon" aria-hidden="true">⚠</span>
+            <span class="badge-text">{contextBadge.text}</span>
+          </span>
+        {/if}
         <span class="chevron" aria-hidden="true">▴</span>
       </button>
     {/if}
@@ -189,6 +245,31 @@
   .v.muted {
     color: var(--fg-3);
     opacity: 0.7;
+  }
+  .v.warn {
+    color: var(--warn);
+  }
+
+  /* The badge pairs colour with an icon and text, so the warning never relies on
+     colour alone and reads for assistive tech via its aria-label. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    border-radius: var(--radius-control);
+    border: 1px solid currentColor;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+  .badge.warn {
+    color: var(--warn);
+  }
+  .badge.critical {
+    color: var(--danger);
+  }
+  .badge-icon {
+    font-size: 10px;
   }
 
   .chevron {

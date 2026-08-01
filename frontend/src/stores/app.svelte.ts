@@ -77,6 +77,75 @@ export type UsageReport = {
   attempts: Record<string, UsageTotals>;
 };
 
+/** The usage-warning thresholds, mirroring the Go `session.UsageSettings` shape. */
+export type UsageThresholds = {
+  contextWarnPercent: number;
+  contextCriticalPercent: number;
+  /** Optional per-session cost above which the UI warns; absent = no warning. */
+  costWarnAmount?: number;
+};
+
+/** Warning severity for a usage dimension. "none" means nothing to flag. */
+export type WarnLevel = "none" | "warn" | "critical";
+
+/** The context defaults, matching the Go `DefaultContext*Percent` constants. */
+export const DEFAULT_THRESHOLDS: UsageThresholds = {
+  contextWarnPercent: 80,
+  contextCriticalPercent: 95,
+};
+
+/**
+ * Context utilization for a group: the peak single-payload footprint over the
+ * model's context window. Null when either is unknown — utilization is only
+ * meaningful when both the token count and the window size are known (AC1), and
+ * an unknown window must never produce a false warning (AC6).
+ */
+export function contextUtilization(g: UsageGroup): number | null {
+  const window = g.contextWindow ?? 0;
+  const peak = g.peakContextTokens ?? 0;
+  if (window <= 0 || peak <= 0) return null;
+  return peak / window;
+}
+
+/** The warning level for a utilization ratio against the configured thresholds. */
+export function contextLevel(ratio: number | null, t: UsageThresholds): WarnLevel {
+  if (ratio == null) return "none";
+  const pct = ratio * 100;
+  if (pct >= t.contextCriticalPercent) return "critical";
+  if (pct >= t.contextWarnPercent) return "warn";
+  return "none";
+}
+
+/**
+ * The worst context-utilization state across a scope's groups: the highest known
+ * utilization and its warning level. Groups without a known window are ignored,
+ * so a provider that never reports a window contributes no warning.
+ */
+export function worstContext(
+  totals: UsageTotals | undefined,
+  t: UsageThresholds,
+): { level: WarnLevel; ratio: number | null } {
+  const groups = totals?.groups ?? [];
+  let ratio: number | null = null;
+  for (const g of groups) {
+    const u = contextUtilization(g);
+    if (u == null) continue;
+    if (ratio == null || u > ratio) ratio = u;
+  }
+  return { level: contextLevel(ratio, t), ratio };
+}
+
+/**
+ * Cost warning level for a scope. Only a configured amount over a scope with a
+ * known cost (non-empty currency) can warn: an unknown cost is unavailable, not a
+ * breach (AC6). Cost breaches are informational, so they never escalate past warn.
+ */
+export function costLevel(totals: UsageTotals | undefined, t: UsageThresholds): WarnLevel {
+  if (t.costWarnAmount == null) return "none";
+  if (!totals || !totals.currency) return "none";
+  return totals.cost >= t.costWarnAmount ? "warn" : "none";
+}
+
 class AppState {
   project = $state<Project | null>(null);
   prds = $state<PRDSummary[]>([]);
@@ -138,6 +207,21 @@ class AppState {
   /** The project (General) usage grand total across every run. */
   get generalUsage(): UsageTotals | undefined {
     return this.usage?.project;
+  }
+
+  /**
+   * The configured usage-warning thresholds, falling back to the defaults when a
+   * project (or its usage block) is not loaded. Reads $state so it stays reactive
+   * when settings change.
+   */
+  get thresholds(): UsageThresholds {
+    const u = (this.config as { usage?: Partial<UsageThresholds> } | null)?.usage;
+    return {
+      contextWarnPercent: u?.contextWarnPercent || DEFAULT_THRESHOLDS.contextWarnPercent,
+      contextCriticalPercent:
+        u?.contextCriticalPercent || DEFAULT_THRESHOLDS.contextCriticalPercent,
+      costWarnAmount: u?.costWarnAmount ?? undefined,
+    };
   }
 
   /** The human title of the run's current story, for naming a scope. */
