@@ -71,10 +71,15 @@ type Session struct {
 	// runs holds a snapshot per run, including finished ones, so the UI can still
 	// render a completed run's summary. live holds only those with a goroutine
 	// attached and is what the control methods operate on.
-	runs      map[string]*RunSnapshot
-	live      map[string]*run
-	runSeq    int
-	questions map[QuestionID]Question
+	runs   map[string]*RunSnapshot
+	live   map[string]*run
+	runSeq int
+	// questions are the outstanding decisions; pending holds the channel each
+	// asking goroutine is parked on.
+	questions   map[QuestionID]Question
+	pending     map[QuestionID]chan Answer
+	questionSeq int
+	autoAnswer  bool
 
 	closeOnce sync.Once
 }
@@ -99,6 +104,7 @@ func New(opts Options) (*Session, error) {
 		runs:      make(map[string]*RunSnapshot),
 		live:      make(map[string]*run),
 		questions: make(map[QuestionID]Question),
+		pending:   make(map[QuestionID]chan Answer),
 	}, nil
 }
 
@@ -206,6 +212,7 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 	s.runs = make(map[string]*RunSnapshot)
 	s.live = make(map[string]*run)
 	s.questions = make(map[QuestionID]Question)
+	s.pending = make(map[QuestionID]chan Answer)
 	s.mu.Unlock()
 
 	s.bus.publish(Event{
