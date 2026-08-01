@@ -38,47 +38,54 @@ func newUsageStore(root string) *usageStore {
 	return &usageStore{path: filepath.Join(root, chiefDir, usageFile)}
 }
 
-// usageEnvelope is the on-disk shape: a version tag plus the attributed records.
-// Records already carry every field needed to group them by run, PRD, story,
-// attempt, provider and model, so persisting them verbatim is enough to rebuild
-// the whole report on load.
+// usageEnvelope is the on-disk shape: a version tag, the attributed records, and
+// the recorded terminal state of each run. Records already carry every field
+// needed to group them by run, PRD, story, attempt, provider and model, so
+// persisting them verbatim is enough to rebuild the totals on load. RunStates
+// carries the one thing the records cannot: how a session ended, so history
+// browsing shows completed/stopped/failed across a restart. It is optional, so a
+// file written before it existed still loads.
 type usageEnvelope struct {
-	Version int           `json:"version"`
-	Records []UsageRecord `json:"records"`
+	Version   int                    `json:"version"`
+	Records   []UsageRecord          `json:"records"`
+	RunStates map[string]runTerminal `json:"runStates,omitempty"`
 }
 
-// load returns the persisted records, or an empty history when no file exists.
+// load returns the persisted records and run states, or an empty history when no
+// file exists.
 //
 // A missing or empty file is not an error — it is the first-run case. A present
 // file that cannot be parsed, or that carries an unsupported version, is an
 // error: the caller surfaces it rather than silently discarding history.
-func (s *usageStore) load() ([]UsageRecord, error) {
+func (s *usageStore) load() ([]UsageRecord, map[string]runTerminal, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read usage history %s: %w", s.path, err)
+		return nil, nil, fmt.Errorf("read usage history %s: %w", s.path, err)
 	}
 	if len(data) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var env usageEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return nil, fmt.Errorf("parse usage history %s: %w", s.path, err)
+		return nil, nil, fmt.Errorf("parse usage history %s: %w", s.path, err)
 	}
 	if env.Version != usageFileVersion {
-		return nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"usage history %s has unsupported version %d (expected %d)",
 			s.path, env.Version, usageFileVersion)
 	}
-	return env.Records, nil
+	return env.Records, env.RunStates, nil
 }
 
-// save writes the records atomically, creating .chief/ if it does not yet exist.
-func (s *usageStore) save(records []UsageRecord) error {
-	data, err := json.MarshalIndent(usageEnvelope{Version: usageFileVersion, Records: records}, "", "  ")
+// save writes the records and run states atomically, creating .chief/ if it does
+// not yet exist.
+func (s *usageStore) save(records []UsageRecord, runStates map[string]runTerminal) error {
+	env := usageEnvelope{Version: usageFileVersion, Records: records, RunStates: runStates}
+	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode usage history: %w", err)
 	}

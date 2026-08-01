@@ -195,11 +195,37 @@ type UsageRecord = {
   currency?: string;
 };
 
+type StoryUsage = {
+  storyId: string;
+  attempts: number;
+  totals: UsageTotals;
+};
+
+type SessionUsage = {
+  runId: string;
+  prd?: string;
+  provider?: string;
+  model?: string;
+  startedAt: number;
+  endedAt?: number;
+  state?: string;
+  totals: UsageTotals;
+  stories?: StoryUsage[];
+};
+
 type UsageReport = {
   project: UsageTotals;
   runs: Record<string, UsageTotals>;
   stories: Record<string, UsageTotals>;
   attempts: Record<string, UsageTotals>;
+  sessions?: SessionUsage[];
+};
+
+// Recorded terminal outcomes per run, the way the Go store persists them. run_1
+// has none — it is the live run, so the report resolves it to "active".
+const mockRunStates: Record<string, string> = {
+  run_prev: "completed",
+  run_1: "active",
 };
 
 function emptyTotals(): UsageTotals {
@@ -314,7 +340,60 @@ function buildUsageReport(records: UsageRecord[]): UsageReport {
     accumulate(report.stories, `${rec.runId}/${rec.storyId}`, rec);
     accumulate(report.attempts, `${rec.runId}/${rec.storyId}#${rec.attempt}`, rec);
   }
+  report.sessions = buildSessions(records, report);
   return report;
+}
+
+/** buildSessions mirrors the Go read model's per-run history: one entry per run,
+ *  newest first, each with its stories and resolved lifecycle state. */
+function buildSessions(records: UsageRecord[], report: UsageReport): SessionUsage[] {
+  const order: string[] = [];
+  const meta = new Map<
+    string,
+    { prd: string; startedAt: number; endedAt: number; storyOrder: string[]; attempts: Map<string, Set<number>> }
+  >();
+  for (const rec of records) {
+    let m = meta.get(rec.runId);
+    if (!m) {
+      m = { prd: rec.prd ?? "", startedAt: rec.at, endedAt: rec.at, storyOrder: [], attempts: new Map() };
+      meta.set(rec.runId, m);
+      order.push(rec.runId);
+    }
+    if (rec.at > 0 && (m.startedAt === 0 || rec.at < m.startedAt)) m.startedAt = rec.at;
+    if (rec.at > m.endedAt) m.endedAt = rec.at;
+    if (!rec.storyId) continue;
+    let set = m.attempts.get(rec.storyId);
+    if (!set) {
+      set = new Set();
+      m.attempts.set(rec.storyId, set);
+      m.storyOrder.push(rec.storyId);
+    }
+    set.add(rec.attempt);
+  }
+
+  const sessions = order.map((runId) => {
+    const m = meta.get(runId)!;
+    const totals = report.runs[runId] ?? emptyTotals();
+    const best = [...totals.groups].sort((a, b) => b.totalTokens - a.totalTokens)[0];
+    const stories: StoryUsage[] = m.storyOrder.map((storyId) => ({
+      storyId,
+      attempts: m.attempts.get(storyId)!.size,
+      totals: report.stories[`${runId}/${storyId}`] ?? emptyTotals(),
+    }));
+    return {
+      runId,
+      prd: m.prd,
+      provider: best?.provider,
+      model: best?.model,
+      startedAt: m.startedAt,
+      endedAt: m.endedAt,
+      state: mockRunStates[runId] ?? "interrupted",
+      totals,
+      stories,
+    };
+  });
+  sessions.sort((a, b) => b.startedAt - a.startedAt);
+  return sessions;
 }
 
 const HOUR = 3_600_000;

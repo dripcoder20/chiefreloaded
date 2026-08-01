@@ -26,11 +26,11 @@ func TestUsageStoreSaveLoadRoundTrips(t *testing.T) {
 		usageRecord("run_1/US-001#1:0", "run_1", "US-001", 1, 100, 10, 0.01),
 		usageRecord("run_1/US-002#1:0", "run_1", "US-002", 1, 200, 20, 0.02),
 	}
-	if err := store.save(records); err != nil {
+	if err := store.save(records, nil); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, err := store.load()
+	got, _, err := store.load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestUsageStoreSaveLoadRoundTrips(t *testing.T) {
 // A missing history file is the first-run case: an empty history, not an error.
 func TestUsageStoreMissingFileIsEmpty(t *testing.T) {
 	store := newUsageStore(t.TempDir())
-	got, err := store.load()
+	got, _, err := store.load()
 	if err != nil {
 		t.Fatalf("a missing usage file must load as empty, got error: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestUsageStoreInvalidFileErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := newUsageStore(root).load(); err == nil {
+	if _, _, err := newUsageStore(root).load(); err == nil {
 		t.Error("invalid usage history should load with an error")
 	}
 }
@@ -83,7 +83,7 @@ func TestUsageStoreUnsupportedVersionErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := newUsageStore(root).load(); err == nil {
+	if _, _, err := newUsageStore(root).load(); err == nil {
 		t.Error("an unsupported version should load with an error")
 	}
 }
@@ -93,7 +93,7 @@ func TestUsageStoreUnsupportedVersionErrors(t *testing.T) {
 func TestUsageStoreCreatesChiefDir(t *testing.T) {
 	root := t.TempDir()
 	store := newUsageStore(root)
-	if err := store.save([]UsageRecord{usageRecord("k", "run_1", "US-001", 1, 1, 1, 0)}); err != nil {
+	if err := store.save([]UsageRecord{usageRecord("k", "run_1", "US-001", 1, 1, 1, 0)}, nil); err != nil {
 		t.Fatalf("save into a project without .chief/: %v", err)
 	}
 	if _, err := os.Stat(usageFilePath(root)); err != nil {
@@ -107,17 +107,17 @@ func TestUsageLedgerPersistsAndRestores(t *testing.T) {
 	root := t.TempDir()
 
 	first := newUsageLedger()
-	first.open(newUsageStore(root), nil, nil)
+	first.open(newUsageStore(root), nil, nil, nil)
 	scope := attemptScopeKey("run_1", "US-001", 1)
 	first.add(usageRecord(first.nextKey(scope), "run_1", "US-001", 1, 100, 10, 0.01))
 
 	// A second ledger opened against the same project restores the history.
 	second := newUsageLedger()
-	records, err := newUsageStore(root).load()
+	records, _, err := newUsageStore(root).load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second.open(newUsageStore(root), records, nil)
+	second.open(newUsageStore(root), records, nil, nil)
 
 	if got := second.report().Project.InputTokens; got != 100 {
 		t.Errorf("restored project total = %d, want 100", got)
@@ -177,12 +177,12 @@ func TestUsageProjectSwitchReplacesHistory(t *testing.T) {
 	projectA, projectB := t.TempDir(), t.TempDir()
 	if err := newUsageStore(projectA).save([]UsageRecord{
 		usageRecord("run_1/US-001#1:0", "run_1", "US-001", 1, 100, 10, 0.01),
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := newUsageStore(projectB).save([]UsageRecord{
 		usageRecord("run_1/US-001#1:0", "run_1", "US-001", 1, 500, 50, 0.5),
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -268,7 +268,7 @@ func TestUsageInvalidHistorySurfacesErrorButKeepsProjectUsable(t *testing.T) {
 func TestUsageConcurrentUpdatesArePersistedConsistently(t *testing.T) {
 	root := t.TempDir()
 	ledger := newUsageLedger()
-	ledger.open(newUsageStore(root), nil, nil)
+	ledger.open(newUsageStore(root), nil, nil, nil)
 
 	const goroutines, perGoroutine = 8, 25
 	var wg sync.WaitGroup
@@ -290,7 +290,7 @@ func TestUsageConcurrentUpdatesArePersistedConsistently(t *testing.T) {
 	}
 
 	// The persisted file must hold every record too — no stale write clobbered it.
-	persisted, err := newUsageStore(root).load()
+	persisted, _, err := newUsageStore(root).load()
 	if err != nil {
 		t.Fatalf("load after concurrent writes: %v", err)
 	}

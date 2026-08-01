@@ -2,6 +2,7 @@ package session
 
 import (
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -220,6 +221,45 @@ func (g *UsageGroup) noteCostKind(estimated bool) {
 	}
 }
 
+// Session lifecycle states, as history browsing sees them. Active and interrupted
+// are derived (a live run, or a run with usage but no recorded terminal outcome);
+// the other three are the recorded terminal outcomes of a run.
+const (
+	sessionActive      = "active"
+	sessionInterrupted = "interrupted"
+	sessionCompleted   = "completed"
+	sessionStopped     = "stopped"
+	sessionFailed      = "failed"
+)
+
+// StoryUsage is one story's roll-up within a session, for history browsing. It
+// names the story and how many attempts fed it, alongside the same UsageTotals
+// (with per-provider groups) the detailed panel renders.
+type StoryUsage struct {
+	StoryID  string      `json:"storyId"`
+	Attempts int         `json:"attempts"`
+	Totals   UsageTotals `json:"totals"`
+}
+
+// SessionUsage is one retained session (run) as the history list shows it: enough
+// to render a row — run ID, PRD, the dominant provider/model, when it ran, its
+// lifecycle state and totals — plus the stories it spent tokens on. Sessions are
+// ordered newest first.
+type SessionUsage struct {
+	RunID     string `json:"runId"`
+	PRD       string `json:"prd,omitempty"`
+	Provider  string `json:"provider,omitempty"`
+	Model     string `json:"model,omitempty"`
+	StartedAt int64  `json:"startedAt"`
+	// EndedAt is the last usage timestamp; 0 while the session has no end recorded.
+	EndedAt int64 `json:"endedAt,omitempty"`
+	// State is one of the session* constants. Empty means unknown until reconciled
+	// against the live runs (active vs interrupted).
+	State   string       `json:"state,omitempty"`
+	Totals  UsageTotals  `json:"totals"`
+	Stories []StoryUsage `json:"stories"`
+}
+
 // UsageReport is the whole attributed roll-up at a moment in time. Its numbers
 // are absolute, so a consumer adopts them wholesale rather than accumulating
 // deltas. Maps are keyed so a scope with no usage is simply absent.
@@ -234,6 +274,9 @@ type UsageReport struct {
 	Stories map[string]UsageTotals `json:"stories"`
 	// Attempts is the per-attempt total, keyed by runID/storyID#attempt.
 	Attempts map[string]UsageTotals `json:"attempts"`
+	// Sessions is the retained-session history, newest first, for browsing past
+	// usage by session and story. It is derived from the same records as the maps.
+	Sessions []SessionUsage `json:"sessions"`
 }
 
 // storyScopeKey identifies a story's totals within a run.
@@ -255,16 +298,144 @@ func buildReport(records []UsageRecord) UsageReport {
 		Stories:  make(map[string]UsageTotals),
 		Attempts: make(map[string]UsageTotals),
 	}
+	var order []string
+	meta := make(map[string]*runAccum)
 	for _, rec := range records {
 		rep.Project.addRecord(rec)
 		accumulate(rep.Runs, rec.RunID, rec)
+		order = noteRunMeta(meta, order, rec)
 		if rec.StoryID == "" {
 			continue
 		}
 		accumulate(rep.Stories, storyScopeKey(rec.RunID, rec.StoryID), rec)
 		accumulate(rep.Attempts, attemptScopeKey(rec.RunID, rec.StoryID, rec.Attempt), rec)
 	}
+	rep.Sessions = assembleSessions(order, meta, rep.Runs, rep.Stories)
 	return rep
+}
+
+// runAccum collects the per-session metadata the maps do not carry: when the run
+// ran, which PRD it belonged to, and the stories it touched with their attempt
+// numbers. Timestamps come straight from the record stream.
+type runAccum struct {
+	prd        string
+	startedAt  int64
+	endedAt    int64
+	storyOrder []string
+	attempts   map[string]map[int]struct{}
+}
+
+// noteRunMeta folds one record into its run's metadata, starting a new run entry
+// (and remembering its first-seen position) the first time a run ID appears.
+func noteRunMeta(meta map[string]*runAccum, order []string, rec UsageRecord) []string {
+	ra := meta[rec.RunID]
+	if ra == nil {
+		ra = &runAccum{startedAt: rec.At, attempts: make(map[string]map[int]struct{})}
+		meta[rec.RunID] = ra
+		order = append(order, rec.RunID)
+	}
+	if ra.prd == "" {
+		ra.prd = rec.PRD
+	}
+	if rec.At > 0 && (ra.startedAt == 0 || rec.At < ra.startedAt) {
+		ra.startedAt = rec.At
+	}
+	if rec.At > ra.endedAt {
+		ra.endedAt = rec.At
+	}
+	if rec.StoryID != "" {
+		ra.noteStory(rec.StoryID, rec.Attempt)
+	}
+	return order
+}
+
+// noteStory records a story (in first-seen order) and the attempt number that
+// produced this record, so the story's attempt count is the number of distinct
+// attempts that spent tokens on it.
+func (ra *runAccum) noteStory(storyID string, attempt int) {
+	set := ra.attempts[storyID]
+	if set == nil {
+		set = make(map[int]struct{})
+		ra.attempts[storyID] = set
+		ra.storyOrder = append(ra.storyOrder, storyID)
+	}
+	set[attempt] = struct{}{}
+}
+
+// assembleSessions turns the collected metadata into the session history, newest
+// first. The dominant provider/model comes from the run's largest usage group so
+// a session row names the provider that did most of the work.
+func assembleSessions(
+	order []string,
+	meta map[string]*runAccum,
+	runs, stories map[string]UsageTotals,
+) []SessionUsage {
+	sessions := make([]SessionUsage, 0, len(order))
+	for _, runID := range order {
+		ra := meta[runID]
+		totals := runs[runID]
+		provider, model := dominantProviderModel(totals)
+		sessions = append(sessions, SessionUsage{
+			RunID:     runID,
+			PRD:       ra.prd,
+			Provider:  provider,
+			Model:     model,
+			StartedAt: ra.startedAt,
+			EndedAt:   ra.endedAt,
+			Totals:    totals,
+			Stories:   storiesOf(runID, ra, stories),
+		})
+	}
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].StartedAt > sessions[j].StartedAt
+	})
+	return sessions
+}
+
+// storiesOf builds a session's story list in first-seen order, each with its
+// distinct-attempt count and totals.
+func storiesOf(runID string, ra *runAccum, stories map[string]UsageTotals) []StoryUsage {
+	out := make([]StoryUsage, 0, len(ra.storyOrder))
+	for _, storyID := range ra.storyOrder {
+		out = append(out, StoryUsage{
+			StoryID:  storyID,
+			Attempts: len(ra.attempts[storyID]),
+			Totals:   stories[storyScopeKey(runID, storyID)],
+		})
+	}
+	return out
+}
+
+// dominantProviderModel reports the provider and model of a scope's largest group
+// by total tokens, so a summary row names the provider that did most of the work.
+// A scope with a single group (the common case) simply returns that group.
+func dominantProviderModel(t UsageTotals) (string, string) {
+	var best *UsageGroup
+	for i := range t.Groups {
+		g := &t.Groups[i]
+		if best == nil || g.TotalTokens > best.TotalTokens {
+			best = g
+		}
+	}
+	if best == nil {
+		return "", ""
+	}
+	return best.Provider, best.Model
+}
+
+// applyRunStates stamps each session with its recorded terminal state, if any. A
+// session with no recorded terminal state keeps an empty State, to be reconciled
+// against the live runs (active vs interrupted) by the session layer.
+func applyRunStates(sessions []SessionUsage, states map[string]runTerminal) []SessionUsage {
+	for i := range sessions {
+		if st, ok := states[sessions[i].RunID]; ok {
+			sessions[i].State = st.State
+			if st.EndedAt > 0 {
+				sessions[i].EndedAt = st.EndedAt
+			}
+		}
+	}
+	return sessions
 }
 
 // accumulate folds a record into the totals stored at key.
@@ -337,16 +508,28 @@ type usageLedger struct {
 	records  []UsageRecord
 	counters map[string]int // per attempt scope, for stable key assignment
 
+	// runStates records the terminal outcome of a run (completed, stopped, failed)
+	// so a session browsed after a restart shows how it ended rather than reading
+	// as interrupted. Runs with no entry ended without a recorded outcome.
+	runStates map[string]runTerminal
+
 	// store persists records to the open project's .chief/. Nil before a project
 	// is open (and in pure unit tests), where the ledger is in-memory only.
 	store *usageStore
 	log   *slog.Logger
 }
 
+// runTerminal is a run's recorded terminal state and the time it reached it.
+type runTerminal struct {
+	State   string `json:"state"`
+	EndedAt int64  `json:"endedAt,omitempty"`
+}
+
 func newUsageLedger() *usageLedger {
 	return &usageLedger{
-		seen:     make(map[string]struct{}),
-		counters: make(map[string]int),
+		seen:      make(map[string]struct{}),
+		counters:  make(map[string]int),
+		runStates: make(map[string]runTerminal),
 	}
 }
 
@@ -377,22 +560,50 @@ func (l *usageLedger) add(rec UsageRecord) bool {
 	return true
 }
 
-// persistLocked writes the current records through the store, if one is attached.
-// Callers hold l.mu.
+// noteRunTerminal records how a run ended and persists it, so a session browsed
+// after a restart shows completed/stopped/failed rather than interrupted. It is a
+// no-op for a non-terminal state, keeping the caller free to hand it every
+// transition.
+func (l *usageLedger) noteRunTerminal(runID, state string, endedAt int64) {
+	if !isTerminalSessionState(state) {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.runStates[runID] = runTerminal{State: state, EndedAt: endedAt}
+	l.persistLocked()
+}
+
+// isTerminalSessionState reports whether a state is a recorded terminal outcome
+// (as opposed to the derived active/interrupted states).
+func isTerminalSessionState(state string) bool {
+	switch state {
+	case sessionCompleted, sessionStopped, sessionFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// persistLocked writes the current records and run states through the store, if
+// one is attached. Callers hold l.mu.
 func (l *usageLedger) persistLocked() {
 	if l.store == nil {
 		return
 	}
-	if err := l.store.save(l.records); err != nil && l.log != nil {
+	if err := l.store.save(l.records, l.runStates); err != nil && l.log != nil {
 		l.log.Warn("persist usage history", "error", err)
 	}
 }
 
-// report returns the absolute cumulative roll-up across every recorded usage.
+// report returns the absolute cumulative roll-up across every recorded usage,
+// with each session stamped with its recorded terminal state.
 func (l *usageLedger) report() UsageReport {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return buildReport(l.records)
+	rep := buildReport(l.records)
+	rep.Sessions = applyRunStates(rep.Sessions, l.runStates)
+	return rep
 }
 
 // open points the ledger at a project's store and loads its persisted history in
@@ -402,7 +613,12 @@ func (l *usageLedger) report() UsageReport {
 //
 // Key counters are restored from the loaded keys so freshly assigned keys pick up
 // after the persisted ones instead of colliding with them.
-func (l *usageLedger) open(store *usageStore, records []UsageRecord, log *slog.Logger) {
+func (l *usageLedger) open(
+	store *usageStore,
+	records []UsageRecord,
+	states map[string]runTerminal,
+	log *slog.Logger,
+) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.store = store
@@ -410,6 +626,10 @@ func (l *usageLedger) open(store *usageStore, records []UsageRecord, log *slog.L
 	l.seen = make(map[string]struct{}, len(records))
 	l.records = nil
 	l.counters = make(map[string]int)
+	l.runStates = make(map[string]runTerminal, len(states))
+	for runID, st := range states {
+		l.runStates[runID] = st
+	}
 	for _, rec := range records {
 		if _, ok := l.seen[rec.Key]; ok {
 			continue

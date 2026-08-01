@@ -1,7 +1,9 @@
 package session
 
 import (
+	"context"
 	"reflect"
+	"strconv"
 	"testing"
 
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
@@ -448,5 +450,142 @@ func TestUsageGroupCarriesContextWindow(t *testing.T) {
 	}
 	if g.PeakContextTokens != 3000 {
 		t.Errorf("peak context tokens = %d, want the largest single payload (3000)", g.PeakContextTokens)
+	}
+}
+
+// histRecord builds a record with the attribution session history reads: run,
+// PRD, story, attempt, provider/model and a timestamp.
+func histRecord(runID, prd, storyID string, attempt int, at int64, provider, model string) UsageRecord {
+	return UsageRecord{
+		Key:   runID + "/" + storyID + "#" + strconv.Itoa(attempt) + ":" + strconv.FormatInt(at, 10),
+		RunID: runID, PRD: prd, StoryID: storyID, Attempt: attempt, At: at,
+		Provider: provider, Model: model,
+		InputTokens: ptr[int64](100), OutputTokens: ptr[int64](10),
+		Cost: ptr(0.01), Currency: "USD",
+	}
+}
+
+// buildReport derives the session history from records: one entry per run, newest
+// first, with the run's PRD, dominant provider/model, start/end times and stories.
+func TestUsageSessionsListRunsNewestFirstWithStories(t *testing.T) {
+	l := newUsageLedger()
+	// run_1 ran first (earlier timestamps), across two stories with a retry on the
+	// second; run_2 ran later.
+	l.add(histRecord("run_1", "alpha", "US-001", 1, 1000, "claude", "claude-opus-4"))
+	l.add(histRecord("run_1", "alpha", "US-002", 1, 1500, "claude", "claude-opus-4"))
+	l.add(histRecord("run_1", "alpha", "US-002", 2, 1800, "claude", "claude-opus-4"))
+	l.add(histRecord("run_2", "beta", "US-001", 1, 3000, "codex", "gpt-5"))
+
+	sessions := l.report().Sessions
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2", len(sessions))
+	}
+
+	// Newest first: run_2 (started at 3000) before run_1 (started at 1000).
+	if sessions[0].RunID != "run_2" || sessions[1].RunID != "run_1" {
+		t.Fatalf("session order = [%s, %s], want [run_2, run_1]", sessions[0].RunID, sessions[1].RunID)
+	}
+
+	run1 := sessions[1]
+	if run1.PRD != "alpha" || run1.Provider != "claude" || run1.Model != "claude-opus-4" {
+		t.Errorf("run_1 summary = %+v, want prd alpha / claude / claude-opus-4", run1)
+	}
+	if run1.StartedAt != 1000 || run1.EndedAt != 1800 {
+		t.Errorf("run_1 times = start %d end %d, want start 1000 end 1800", run1.StartedAt, run1.EndedAt)
+	}
+	if run1.Totals.InputTokens != 300 {
+		t.Errorf("run_1 total input = %d, want 300 across three records", run1.Totals.InputTokens)
+	}
+	if len(run1.Stories) != 2 {
+		t.Fatalf("run_1 stories = %d, want 2", len(run1.Stories))
+	}
+	// Stories in first-seen order; US-002 had two distinct attempts.
+	if run1.Stories[0].StoryID != "US-001" || run1.Stories[0].Attempts != 1 {
+		t.Errorf("first story = %+v, want US-001 with 1 attempt", run1.Stories[0])
+	}
+	if run1.Stories[1].StoryID != "US-002" || run1.Stories[1].Attempts != 2 {
+		t.Errorf("second story = %+v, want US-002 with 2 attempts", run1.Stories[1])
+	}
+	if run1.Stories[1].Totals.InputTokens != 200 {
+		t.Errorf("US-002 total input = %d, want 200 across both attempts", run1.Stories[1].Totals.InputTokens)
+	}
+}
+
+// An empty project has no sessions to browse.
+func TestUsageSessionsEmptyWhenNoUsage(t *testing.T) {
+	if got := newUsageLedger().report().Sessions; len(got) != 0 {
+		t.Errorf("sessions = %d, want 0 for an empty project", len(got))
+	}
+}
+
+// A recorded terminal state is stamped on the session and survives a reopen, so
+// history shows completed/stopped/failed rather than reading as interrupted.
+func TestUsageSessionTerminalStateIsRecordedAndPersisted(t *testing.T) {
+	root := t.TempDir()
+
+	first := newUsageLedger()
+	first.open(newUsageStore(root), nil, nil, nil)
+	first.add(histRecord("run_1", "alpha", "US-001", 1, 1000, "claude", "claude-opus-4"))
+	first.noteRunTerminal("run_1", sessionStopped, 2000)
+	// A non-terminal state is ignored.
+	first.noteRunTerminal("run_1", sessionActive, 3000)
+
+	if got := first.report().Sessions[0]; got.State != sessionStopped || got.EndedAt != 2000 {
+		t.Fatalf("session = %+v, want state stopped / endedAt 2000", got)
+	}
+
+	// Reopen from disk: the terminal state is restored.
+	records, states, err := newUsageStore(root).load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := newUsageLedger()
+	second.open(newUsageStore(root), records, states, nil)
+	if got := second.report().Sessions[0]; got.State != sessionStopped {
+		t.Errorf("restored session state = %q, want stopped", got.State)
+	}
+}
+
+// Through the run engine, a completed run is browsable as a completed session
+// with its story, and stays completed after a restart.
+func TestUsageSessionHistoryThroughRunEngineAndRestart(t *testing.T) {
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "main", oneStoryPRD)
+
+	first := newTestSessionWith(t, fakeagent.New(fakeagent.Behaviour{
+		Text: "working", WriteFile: "out.txt", FileBody: "x", Commit: true, Done: true,
+		Usage: &fakeagent.Usage{InputTokens: 120, OutputTokens: 30, CostUSD: 0.05, Model: "claude"},
+	}))
+	if _, err := first.OpenProject(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := first.Start(context.Background(), StartRequest{PRD: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap := waitFor(t, first, runID); snap.State != StateComplete {
+		t.Fatalf("state = %s, want complete", snap.State)
+	}
+
+	sessions := first.Usage().Sessions
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+	if sessions[0].State != sessionCompleted {
+		t.Errorf("session state = %q, want completed", sessions[0].State)
+	}
+	if len(sessions[0].Stories) == 0 || sessions[0].Stories[0].StoryID != "US-001" {
+		t.Errorf("session stories = %+v, want US-001", sessions[0].Stories)
+	}
+
+	// A restart reopening the same project still shows the session as completed.
+	second := newTestSessionWith(t, fakeagent.New())
+	if _, err := second.OpenProject(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	restored := second.Usage().Sessions
+	if len(restored) != 1 || restored[0].State != sessionCompleted {
+		t.Errorf("restored sessions = %+v, want one completed session", restored)
 	}
 }

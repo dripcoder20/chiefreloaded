@@ -451,7 +451,7 @@ func (r *run) recordUsage(storyID string, attempt int, u *chiefloop.Usage) {
 	r.sess.publish(Event{
 		Kind: EvUsage, RunID: r.id, PRD: r.prdName,
 		StoryID: storyID, Attempt: attempt,
-		Usage: ptr(rec), UsageReport: ptr(r.sess.usage.report()),
+		Usage: ptr(rec), UsageReport: ptr(r.sess.usageReport()),
 	})
 }
 
@@ -493,7 +493,12 @@ func (r *run) finish(state LoopState, kind EventKind, text string, e *ErrorInfo)
 	r.finished = r.sess.now()
 	r.err = e
 	r.storyID = ""
+	finishedAt := r.finished.UnixMilli()
 	r.mu.Unlock()
+
+	// Record how the run ended so history browsing shows completed/stopped/failed
+	// across a restart. Non-terminal transitions (a pause) are ignored inside.
+	r.sess.usage.noteRunTerminal(r.id, sessionStateFromLoop(state), finishedAt)
 
 	// chief leaves a story wedged as in-progress when a run ends any way other
 	// than cleanly, and never clears it on startup either — so a crash strands
@@ -506,6 +511,22 @@ func (r *run) finish(state LoopState, kind EventKind, text string, e *ErrorInfo)
 	r.sess.mu.Unlock()
 
 	r.sess.publish(Event{Kind: kind, RunID: r.id, PRD: r.prdName, Text: text, Run: &snap, Error: e})
+}
+
+// sessionStateFromLoop maps a run's terminal LoopState onto the session history
+// vocabulary. A non-terminal state (running, paused) maps to the empty string,
+// which noteRunTerminal ignores.
+func sessionStateFromLoop(state LoopState) string {
+	switch state {
+	case StateComplete:
+		return sessionCompleted
+	case StateStopped:
+		return sessionStopped
+	case StateError:
+		return sessionFailed
+	default:
+		return ""
+	}
 }
 
 // clearInProgress resets any story left mid-flight back to todo.

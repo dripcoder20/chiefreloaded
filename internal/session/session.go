@@ -190,7 +190,7 @@ func (s *Session) Snapshot() Snapshot {
 		Environment: s.env,
 		Runs:        make([]RunSnapshot, 0, len(s.runs)),
 		Questions:   make([]Question, 0, len(s.questions)),
-		Usage:       s.usage.report(),
+		Usage:       s.usageReportLocked(),
 	}
 	for _, r := range s.runsLocked() {
 		snap.Runs = append(snap.Runs, r)
@@ -226,7 +226,7 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 	// is an empty history; an unreadable one is surfaced below but must not block
 	// opening the project — the PRD list and run controls stay usable regardless.
 	store := newUsageStore(project.Root)
-	records, usageErr := store.load()
+	records, runStates, usageErr := store.load()
 
 	s.mu.Lock()
 	s.project = &project
@@ -239,7 +239,7 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 	s.live = make(map[string]*run)
 	s.questions = make(map[QuestionID]Question)
 	s.pending = make(map[QuestionID]chan Answer)
-	s.usage.open(store, records, s.log)
+	s.usage.open(store, records, runStates, s.log)
 	// Advance the run counter past any persisted run so a new run cannot reuse a
 	// historical run's ID and merge its usage into that run's totals.
 	s.bumpRunSeqLocked(records)
@@ -446,7 +446,50 @@ func (s *Session) SaveConfig(cfg config.Config) error {
 // Usage returns the absolute cumulative usage roll-up for the open project,
 // attributed by attempt, story and run.
 func (s *Session) Usage() UsageReport {
-	return s.usage.report()
+	return s.usageReport()
+}
+
+// usageReport returns the roll-up with each session's lifecycle state resolved.
+// Sessions with a recorded terminal outcome keep it; the rest are reconciled
+// against the live runs — a run that is currently executing is active, one with
+// usage but no live run and no recorded outcome was interrupted.
+func (s *Session) usageReport() UsageReport {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.usageReportLocked()
+}
+
+// usageReportLocked is usageReport for callers already holding s.mu.
+func (s *Session) usageReportLocked() UsageReport {
+	rep := s.usage.report()
+	for i := range rep.Sessions {
+		ses := &rep.Sessions[i]
+		if ses.State != "" {
+			continue
+		}
+		if s.isRunActiveLocked(ses.RunID) {
+			ses.State = sessionActive
+			continue
+		}
+		ses.State = sessionInterrupted
+	}
+	return rep
+}
+
+// isRunActiveLocked reports whether a run is currently executing in this session,
+// reading through to the live run so a paused or resuming run still counts as
+// active. Callers hold s.mu.
+func (s *Session) isRunActiveLocked(runID string) bool {
+	live, ok := s.live[runID]
+	if !ok {
+		return false
+	}
+	switch live.snapshot().State {
+	case StateRunning, StatePaused, StateAwaiting, StateIdle:
+		return true
+	default:
+		return false
+	}
 }
 
 // Runs returns a snapshot of every run in this session.

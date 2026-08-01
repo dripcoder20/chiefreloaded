@@ -70,11 +70,37 @@ export type UsageTotals = {
   groups?: UsageGroup[];
 };
 
+/** One story's roll-up within a session, for history browsing. */
+export type StoryUsage = {
+  storyId: string;
+  attempts: number;
+  totals: UsageTotals;
+};
+
+/**
+ * One retained session (run) as the history list shows it. State is one of
+ * "active" | "interrupted" | "completed" | "stopped" | "failed": the first two
+ * are derived from the live runs, the rest are recorded terminal outcomes.
+ */
+export type SessionUsage = {
+  runId: string;
+  prd?: string;
+  provider?: string;
+  model?: string;
+  startedAt: number;
+  endedAt?: number;
+  state?: string;
+  totals: UsageTotals;
+  stories?: StoryUsage[];
+};
+
 export type UsageReport = {
   project: UsageTotals;
   runs: Record<string, UsageTotals>;
   stories: Record<string, UsageTotals>;
   attempts: Record<string, UsageTotals>;
+  /** Retained sessions, newest first, for browsing usage by session and story. */
+  sessions?: SessionUsage[];
 };
 
 /** The usage-warning thresholds, mirroring the Go `session.UsageSettings` shape. */
@@ -207,6 +233,11 @@ class AppState {
   /** The project (General) usage grand total across every run. */
   get generalUsage(): UsageTotals | undefined {
     return this.usage?.project;
+  }
+
+  /** The retained-session history, newest first, for the General scope. */
+  get generalSessions(): SessionUsage[] {
+    return this.usage?.sessions ?? [];
   }
 
   /**

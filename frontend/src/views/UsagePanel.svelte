@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { api, type PRDDetail } from "../platform";
   import {
     app,
     contextLevel,
     contextUtilization,
     costLevel,
+    type SessionUsage,
+    type StoryUsage,
     type UsageGroup,
     type UsageTotals,
     type WarnLevel,
@@ -83,6 +86,106 @@
   }
 
   const activeGroups = $derived(groupsOf(active.totals));
+
+  // ------------------------------------------------------ history browsing --
+
+  // The General scope is a history browser: a list of retained sessions, each
+  // expandable to its stories, and a story drill-down that shows the same usage
+  // breakdown the other scopes render — without ever touching the active PRD or
+  // the story selected in the main Stories view.
+  const sessions = $derived(app.generalSessions);
+
+  // Only the expanded session's stories are in the DOM at once, so the list stays
+  // responsive with thousands of sessions and story aggregates.
+  let expandedRun = $state<string | null>(null);
+
+  // A selected historical story, shown as a full breakdown over the list.
+  let historyStory = $state<{ session: SessionUsage; story: StoryUsage } | null>(null);
+
+  // PRD details, fetched lazily on expand, purely to enrich stories with their
+  // titles and completion states. A PRD that no longer resolves caches as null and
+  // the story simply shows without a title — titles are shown "when available".
+  let prdCache = $state<Record<string, PRDDetail | null>>({});
+
+  function toggleSession(s: SessionUsage): void {
+    expandedRun = expandedRun === s.runId ? null : s.runId;
+    if (expandedRun && s.prd) void loadPrd(s.prd);
+  }
+
+  async function loadPrd(name: string): Promise<void> {
+    if (name in prdCache) return;
+    prdCache = { ...prdCache, [name]: null }; // mark in-flight so we fetch once
+    try {
+      prdCache = { ...prdCache, [name]: await api.prd.get(name) };
+    } catch {
+      // A deleted or unreadable PRD leaves the null placeholder: no title, no
+      // completion state, which is the documented "when available" behaviour.
+    }
+  }
+
+  function storyMeta(session: SessionUsage, storyId: string): { title?: string; status?: string } {
+    const detail = session.prd ? prdCache[session.prd] : null;
+    const story = detail?.stories?.find((s) => s.id === storyId);
+    return { title: story?.title, status: story?.status };
+  }
+
+  function openHistoryStory(session: SessionUsage, story: StoryUsage): void {
+    // Deliberately does NOT set app.selectedPrd / app.selectedStory: browsing
+    // history must never disturb the main Stories view.
+    historyStory = { session, story };
+  }
+
+  function backToList(): void {
+    historyStory = null;
+  }
+
+  // A session's lifecycle state, as a badge: a distinct label and class so active
+  // and interrupted sessions never read as completed, stopped or failed. The label
+  // carries the meaning, so the state is never conveyed by colour alone (AC4).
+  function stateBadge(state: string | undefined): { label: string; cls: string } {
+    switch (state) {
+      case "active":
+        return { label: "Active", cls: "active" };
+      case "interrupted":
+        return { label: "Interrupted", cls: "interrupted" };
+      case "completed":
+        return { label: "Completed", cls: "completed" };
+      case "stopped":
+        return { label: "Stopped", cls: "stopped" };
+      case "failed":
+        return { label: "Failed", cls: "failed" };
+      default:
+        return { label: "Unknown", cls: "unknown" };
+    }
+  }
+
+  const isEnded = (s: SessionUsage) => s.state !== "active";
+
+  const dateFmt = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  function whenText(ms: number | undefined): string {
+    if (!ms || ms <= 0) return "—";
+    return dateFmt.format(new Date(ms));
+  }
+
+  // A scope's headline token total and cost, reused for session and story rows.
+  function totalTokensText(t: UsageTotals | undefined): string {
+    if (!t || t.records === 0) return "—";
+    return `${compactFmt.format(t.totalTokens)}`;
+  }
+
+  function totalTokensLabel(t: UsageTotals | undefined): string {
+    if (!t || t.records === 0) return "no usage recorded";
+    return `${fullFmt.format(t.totalTokens)} tokens`;
+  }
+
+  function costText(t: UsageTotals | undefined): string {
+    if (!t || !t.currency) return "—";
+    return money(t.currency, t.cost);
+  }
 
   // ---------------------------------------------------------------- format --
 
@@ -236,6 +339,11 @@
   function onDialogKey(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
+      // In a historical story drill-down, Escape steps back to the list first.
+      if (historyStory) {
+        backToList();
+        return;
+      }
       onclose();
       return;
     }
@@ -299,45 +407,10 @@
     <div class="scope-name" aria-live="polite">{active.name}</div>
 
     <div class="body" role="tabpanel" aria-label={`${active.label} usage`}>
-      {#if activeGroups.length === 0}
-        <p class="empty">No usage recorded for this {active.label.toLowerCase()} yet.</p>
+      {#if scope === "general"}
+        {@render generalScope()}
       {:else}
-        {#if activeGroups.length > 1}
-          <p class="grouped-note">
-            Grouped by provider, model and currency — totals are not combined across groups.
-          </p>
-        {/if}
-        {#each activeGroups as g}
-          <section class="group">
-            <div class="group-head">
-              <span class="provider">{providerLabel(g)}</span>
-              <span class="model">{g.model || "unknown model"}</span>
-              {#if g.currency}<span class="currency">{g.currency}</span>{/if}
-            </div>
-
-            <div class="grid">
-              {#each rowsOf(g) as row}
-                <div class="cell">
-                  <span class="k">{row.label}</span>
-                  <span
-                    class="v"
-                    class:muted={!row.cell.available}
-                    class:warn={row.cell.level === "warn"}
-                    class:critical={row.cell.level === "critical"}
-                    title={row.cell.label}
-                    aria-label={row.cell.label}
-                  >
-                    {#if row.cell.level === "warn" || row.cell.level === "critical"}
-                      <span class="warn-icon" aria-hidden="true">⚠</span>
-                    {/if}
-                    {row.cell.text}
-                    {#if row.tag}<em class="tag">{row.tag}</em>{/if}
-                  </span>
-                </div>
-              {/each}
-            </div>
-          </section>
-        {/each}
+        {@render scopeGroups(activeGroups, active.label)}
       {/if}
 
       <p class="footnote">
@@ -347,6 +420,128 @@
     </div>
   </div>
 </div>
+
+<!-- Group breakdown, shared by the per-scope tabs and the historical story view. -->
+{#snippet groupBlocks(groups: UsageGroup[])}
+  {#if groups.length > 1}
+    <p class="grouped-note">
+      Grouped by provider, model and currency — totals are not combined across groups.
+    </p>
+  {/if}
+  {#each groups as g}
+    <section class="group">
+      <div class="group-head">
+        <span class="provider">{providerLabel(g)}</span>
+        <span class="model">{g.model || "unknown model"}</span>
+        {#if g.currency}<span class="currency">{g.currency}</span>{/if}
+      </div>
+
+      <div class="grid">
+        {#each rowsOf(g) as row}
+          <div class="cell">
+            <span class="k">{row.label}</span>
+            <span
+              class="v"
+              class:muted={!row.cell.available}
+              class:warn={row.cell.level === "warn"}
+              class:critical={row.cell.level === "critical"}
+              title={row.cell.label}
+              aria-label={row.cell.label}
+            >
+              {#if row.cell.level === "warn" || row.cell.level === "critical"}
+                <span class="warn-icon" aria-hidden="true">⚠</span>
+              {/if}
+              {row.cell.text}
+              {#if row.tag}<em class="tag">{row.tag}</em>{/if}
+            </span>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/each}
+{/snippet}
+
+{#snippet scopeGroups(groups: UsageGroup[], label: string)}
+  {#if groups.length === 0}
+    <p class="empty">No usage recorded for this {label.toLowerCase()} yet.</p>
+  {:else}
+    {@render groupBlocks(groups)}
+  {/if}
+{/snippet}
+
+<!-- The General scope: browse retained sessions and their stories. -->
+{#snippet generalScope()}
+  {#if sessions.length === 0}
+    <p class="empty">No usage recorded for this project</p>
+  {:else if historyStory}
+    {@const s = historyStory.session}
+    {@const st = historyStory.story}
+    {@const meta = storyMeta(s, st.storyId)}
+    <div class="history-detail">
+      <button class="back" onclick={backToList}>← Back to sessions</button>
+      <div class="detail-head">
+        <span class="run-id">{s.runId}</span>
+        <span class="story-id">{st.storyId}</span>
+        {#if meta.title}<span class="story-title">{meta.title}</span>{/if}
+      </div>
+      <div class="detail-sub">
+        {st.attempts}
+        {st.attempts === 1 ? "attempt" : "attempts"}
+        · {s.prd || "unknown PRD"}{meta.status ? ` · ${meta.status}` : ""}
+      </div>
+      {@render scopeGroups(groupsOf(st.totals), "story")}
+    </div>
+  {:else}
+    <ul class="sessions" aria-label="Retained sessions, newest first">
+      {#each sessions as s (s.runId)}
+        {@const badge = stateBadge(s.state)}
+        <li class="session">
+          <button
+            class="session-head"
+            aria-expanded={expandedRun === s.runId}
+            onclick={() => toggleSession(s)}
+          >
+            <span class="disclosure" aria-hidden="true">{expandedRun === s.runId ? "▾" : "▸"}</span>
+            <span class="run-id">{s.runId}</span>
+            <span class="prd">{s.prd || "unknown PRD"}</span>
+            <span class="pm">{s.provider || "unknown"}{s.model ? ` · ${s.model}` : ""}</span>
+            <span class="badge {badge.cls}">{badge.label}</span>
+            <span class="when" title={`started ${whenText(s.startedAt)}`}>
+              {whenText(s.startedAt)} → {isEnded(s) ? whenText(s.endedAt) : "active"}
+            </span>
+            <span class="tok" aria-label={totalTokensLabel(s.totals)}>{totalTokensText(s.totals)}</span>
+            <span class="cost">{costText(s.totals)}</span>
+          </button>
+
+          {#if expandedRun === s.runId}
+            <div class="stories">
+              {#if s.stories && s.stories.length > 0}
+                {#each s.stories as st (st.storyId)}
+                  {@const meta = storyMeta(s, st.storyId)}
+                  <button class="story-row" onclick={() => openHistoryStory(s, st)}>
+                    <span class="story-id">{st.storyId}</span>
+                    {#if meta.title}<span class="story-title">{meta.title}</span>{/if}
+                    <span class="attempts">
+                      {st.attempts}
+                      {st.attempts === 1 ? "attempt" : "attempts"}
+                    </span>
+                    {#if meta.status}<span class="story-status">{meta.status}</span>{/if}
+                    <span class="tok" aria-label={totalTokensLabel(st.totals)}>
+                      {totalTokensText(st.totals)}
+                    </span>
+                    <span class="cost">{costText(st.totals)}</span>
+                  </button>
+                {/each}
+              {:else}
+                <p class="empty">No stories recorded for this session.</p>
+              {/if}
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+{/snippet}
 
 <style>
   .scrim {
@@ -527,5 +722,149 @@
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 0 4px;
+  }
+
+  /* ------------------------------------------------------ history browser -- */
+
+  .sessions {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .session + .session {
+    border-top: 1px solid var(--border);
+  }
+
+  .session-head,
+  .story-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    background: none;
+    border: 0;
+    padding: 6px 4px;
+    color: var(--fg-2);
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-align: left;
+    cursor: default;
+  }
+  .session-head:hover,
+  .session-head:focus-visible,
+  .story-row:hover,
+  .story-row:focus-visible {
+    outline: none;
+    background: var(--bg-inset, rgba(127, 127, 127, 0.08));
+  }
+
+  .disclosure {
+    width: 1em;
+    color: var(--fg-3);
+  }
+  .run-id {
+    color: var(--fg-1);
+    font-weight: 600;
+  }
+  .prd {
+    color: var(--fg-2);
+  }
+  .pm {
+    color: var(--fg-3);
+  }
+  .when {
+    color: var(--fg-3);
+    font-size: 11px;
+  }
+  /* Push the numeric columns to the right so rows line up. */
+  .session-head .tok,
+  .story-row .tok {
+    margin-left: auto;
+  }
+  .tok {
+    color: var(--fg-1);
+  }
+  .cost {
+    color: var(--fg-2);
+    min-width: 4em;
+    text-align: right;
+  }
+
+  /* State badges: each has a distinct label AND colour, so active/interrupted are
+     never distinguished from completed/stopped/failed by colour alone. */
+  .badge {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 5px;
+  }
+  .badge.active {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .badge.interrupted {
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+  .badge.completed {
+    color: var(--ok, #3fa66a);
+    border-color: var(--ok, #3fa66a);
+  }
+  .badge.stopped {
+    color: var(--fg-3);
+  }
+  .badge.failed {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .badge.unknown {
+    color: var(--fg-3);
+  }
+
+  .stories {
+    padding: 2px 0 6px 1.6em;
+  }
+  .story-row {
+    font-size: 11px;
+  }
+  .story-id {
+    color: var(--fg-1);
+    font-weight: 600;
+  }
+  .story-title {
+    color: var(--fg-2);
+  }
+  .attempts,
+  .story-status {
+    color: var(--fg-3);
+  }
+
+  .history-detail .back {
+    background: none;
+    border: 0;
+    padding: 0 0 8px;
+    color: var(--fg-3);
+    font: inherit;
+    cursor: default;
+  }
+  .history-detail .back:hover,
+  .history-detail .back:focus-visible {
+    outline: none;
+    color: var(--fg-1);
+  }
+  .detail-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--font-mono);
+  }
+  .detail-sub {
+    margin: 2px 0 10px;
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
   }
 </style>
