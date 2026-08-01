@@ -44,6 +44,13 @@ type Event struct {
 	Story    *StorySnap   `json:"story,omitempty"`
 	Run      *RunSnapshot `json:"run,omitempty"`
 	Error    *ErrorInfo   `json:"error,omitempty"`
+
+	// Usage is the record this event attributed, and UsageReport the absolute
+	// cumulative roll-up as of this event. UsageReport is a snapshot, never a
+	// delta, so replaying this event re-adopts the same totals rather than adding
+	// to them.
+	Usage       *UsageRecord `json:"usage,omitempty"`
+	UsageReport *UsageReport `json:"usageReport,omitempty"`
 }
 
 // EventKind names what happened. Dotted lowercase so the frontend can group by
@@ -71,6 +78,10 @@ const (
 	EvStoryDone    EventKind = "story.done"
 	EvStoryFailed  EventKind = "story.failed"
 	EvStorySkipped EventKind = "story.skipped"
+
+	// Usage attributed to an attempt, story, run and project. Carries an absolute
+	// cumulative roll-up, so it is never dropped under pressure.
+	EvUsage EventKind = "usage"
 
 	// Agent output. These are the high-volume kinds and the only ones the bus is
 	// allowed to drop under pressure.

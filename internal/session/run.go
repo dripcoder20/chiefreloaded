@@ -402,10 +402,17 @@ func (r *run) markDone(ctx context.Context, storyID, storyTitle string, check Co
 // — the goroutine scanning the agent's stdout — will block.
 func (r *run) forwardAgentEvents(l *chiefloop.Loop, storyID string, attempt int) {
 	for ev := range l.Events() {
+		// Usage can ride along on a content event (Claude assistant text + usage)
+		// or arrive as a usage-only event, so attribute it whenever it is present
+		// regardless of the event kind, and only once per payload.
+		if ev.Usage != nil {
+			r.recordUsage(storyID, attempt, ev.Usage)
+		}
+
 		kind, ok := agentEventKind(ev.Type)
 		if !ok {
-			// Story-done, completion and max-iteration events drive the state
-			// machine instead, and are re-emitted with better payloads.
+			// Story-done, completion, usage and max-iteration events drive the state
+			// machine or the usage ledger instead, not the agent-output stream.
 			continue
 		}
 		out := Event{
@@ -420,6 +427,40 @@ func (r *run) forwardAgentEvents(l *chiefloop.Loop, storyID string, attempt int)
 		}
 		r.sess.publish(out)
 	}
+}
+
+// recordUsage attributes one usage payload to this attempt, story, run and
+// project, then publishes the record with the absolute cumulative roll-up.
+//
+// A duplicate submission (same key) is dropped by the ledger and does not
+// re-publish, so replaying the source event cannot inflate a total.
+func (r *run) recordUsage(storyID string, attempt int, u *chiefloop.Usage) {
+	attr := usageAttribution{
+		runID:    r.id,
+		prd:      r.prdName,
+		storyID:  storyID,
+		attempt:  attempt,
+		provider: r.providerName(),
+		at:       r.sess.now().UnixMilli(),
+	}
+	key := r.sess.usage.nextKey(attemptScopeKey(r.id, storyID, attempt))
+	rec := buildUsageRecord(key, attr, u)
+	if !r.sess.usage.add(rec) {
+		return
+	}
+	r.sess.publish(Event{
+		Kind: EvUsage, RunID: r.id, PRD: r.prdName,
+		StoryID: storyID, Attempt: attempt,
+		Usage: ptr(rec), UsageReport: ptr(r.sess.usage.report()),
+	})
+}
+
+// providerName reports the resolved agent CLI name, or "" before one is set.
+func (r *run) providerName() string {
+	if r.provider == nil {
+		return ""
+	}
+	return r.provider.Name()
 }
 
 // awaitResume blocks while paused. Returns true when the run should end.

@@ -89,6 +89,10 @@ type Session struct {
 	authoring   *authoring.Manager
 	authorSpecs map[string]authoring.Spec
 
+	// usage accumulates attributed usage across every run in the open project,
+	// deduplicating on submission so replays cannot inflate a total.
+	usage *usageLedger
+
 	closeOnce sync.Once
 }
 
@@ -115,6 +119,7 @@ func New(opts Options) (*Session, error) {
 		pending:     make(map[QuestionID]chan Answer),
 		authoring:   authoring.NewManager(),
 		authorSpecs: make(map[string]authoring.Spec),
+		usage:       newUsageLedger(),
 	}, nil
 }
 
@@ -183,6 +188,7 @@ func (s *Session) Snapshot() Snapshot {
 		Environment: s.env,
 		Runs:        make([]RunSnapshot, 0, len(s.runs)),
 		Questions:   make([]Question, 0, len(s.questions)),
+		Usage:       s.usage.report(),
 	}
 	for _, r := range s.runsLocked() {
 		snap.Runs = append(snap.Runs, r)
@@ -220,11 +226,12 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 	s.loopCfg = loopCfg
 	s.env = env
 	s.prds = prds
-	// Runs and questions belong to the previous project.
+	// Runs, questions and usage totals belong to the previous project.
 	s.runs = make(map[string]*RunSnapshot)
 	s.live = make(map[string]*run)
 	s.questions = make(map[QuestionID]Question)
 	s.pending = make(map[QuestionID]chan Answer)
+	s.usage.reset()
 	s.mu.Unlock()
 
 	s.bus.publish(Event{
@@ -379,6 +386,12 @@ func (s *Session) SaveConfig(cfg config.Config) error {
 
 	s.bus.publish(Event{Kind: EvConfigChanged})
 	return nil
+}
+
+// Usage returns the absolute cumulative usage roll-up for the open project,
+// attributed by attempt, story and run.
+func (s *Session) Usage() UsageReport {
+	return s.usage.report()
 }
 
 // Runs returns a snapshot of every run in this session.
