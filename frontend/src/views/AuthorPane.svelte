@@ -5,6 +5,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { api, onAuthorData, onAuthorExit, type AuthorExit } from "../platform";
   import { app, refresh, selectPrd } from "../stores/app.svelte";
+  import { resolveTerminalKey } from "../lib/terminalInput";
 
   /**
    * The interactive agent session that writes a PRD.
@@ -85,9 +86,19 @@
     term.loadAddon(fit);
     term.open(host);
 
-    term.onData((data) => {
-      if (!sessionId || sessionId === "pending") return;
-      void api.author.write(sessionId, btoa(data));
+    term.onData((data) => writeToSession(data));
+
+    // Enter and Shift+Enter reach xterm as the same key; left alone it turns
+    // both into a carriage return, so the agent can't tell "submit" from
+    // "insert a line break". Intercept the key ourselves: Shift+Enter emits a
+    // line feed and we suppress xterm's default (return false), while plain
+    // Enter and everything else fall through untouched (return true).
+    term.attachCustomKeyEventHandler((event) => {
+      const action = resolveTerminalKey(event);
+      if (action.kind === "default") return true;
+      event.preventDefault();
+      writeToSession(action.data);
+      return false;
     });
 
     // Sizing is driven by the element, not by one measurement taken at a moment
@@ -98,6 +109,11 @@
     observer = new ResizeObserver(() => refit());
     observer.observe(host);
     refit();
+  }
+
+  function writeToSession(data: string): void {
+    if (!sessionId || sessionId === "pending") return;
+    void api.author.write(sessionId, btoa(data));
   }
 
   function refit(): void {

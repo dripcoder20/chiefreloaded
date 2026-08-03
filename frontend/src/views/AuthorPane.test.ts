@@ -18,6 +18,7 @@ const bridge = vi.hoisted(() => ({
   interrupt: vi.fn(),
   dataHandler: null as null | ((ev: unknown) => void),
   exitHandler: null as null | ((ev: unknown) => void),
+  keyHandler: null as null | ((e: KeyboardEvent) => boolean),
 }));
 
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
@@ -33,6 +34,9 @@ vi.mock("@xterm/xterm", () => ({
     focus(): void {}
     clear(): void {}
     dispose(): void {}
+    attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean): void {
+      bridge.keyHandler = fn;
+    }
   },
 }));
 
@@ -104,8 +108,10 @@ async function endSession(outcome: Record<string, unknown>, prd = "checkout") {
 beforeEach(() => {
   bridge.start.mockReset();
   bridge.stop.mockReset();
+  bridge.write.mockReset();
   bridge.dataHandler = null;
   bridge.exitHandler = null;
+  bridge.keyHandler = null;
 });
 
 afterEach(() => cleanup());
@@ -178,5 +184,55 @@ describe("AuthorPane session preservation", () => {
     view.unmount();
 
     expect(bridge.stop).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * US-002: the authoring terminal's custom key handler must send a line break on
+ * Shift+Enter without submitting, submit on plain Enter, and never mistake an
+ * IME composition for either. The same handler backs both the New PRD and Edit
+ * PRD terminals — they are one component started with a different `kind`.
+ */
+describe("AuthorPane multiline input", () => {
+  const preventDefault = vi.fn();
+  function enter(init: Partial<KeyboardEvent>): KeyboardEvent {
+    return {
+      type: "keydown",
+      key: "Enter",
+      shiftKey: false,
+      isComposing: false,
+      preventDefault,
+      ...init,
+    } as unknown as KeyboardEvent;
+  }
+
+  beforeEach(() => preventDefault.mockReset());
+
+  it("writes a line feed and suppresses submission on Shift+Enter", async () => {
+    await startSession();
+    expect(bridge.keyHandler).toBeTypeOf("function");
+
+    const handled = bridge.keyHandler!(enter({ shiftKey: true }));
+
+    expect(handled).toBe(false); // xterm must not also emit its default CR
+    expect(preventDefault).toHaveBeenCalled();
+    expect(bridge.write).toHaveBeenCalledWith(SESSION_ID, btoa("\n"));
+  });
+
+  it("lets plain Enter through so xterm submits it", async () => {
+    await startSession();
+
+    const handled = bridge.keyHandler!(enter({ shiftKey: false }));
+
+    expect(handled).toBe(true); // xterm's default CR does the submitting
+    expect(bridge.write).not.toHaveBeenCalled();
+  });
+
+  it("does not submit or insert while an IME composition is in progress", async () => {
+    await startSession();
+
+    expect(bridge.keyHandler!(enter({ isComposing: true }))).toBe(true);
+    expect(bridge.keyHandler!(enter({ shiftKey: true, isComposing: true }))).toBe(true);
+    expect(bridge.write).not.toHaveBeenCalled();
   });
 });
