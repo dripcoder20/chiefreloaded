@@ -17,6 +17,16 @@
    * because nothing is being reinterpreted.
    */
 
+  /**
+   * `active` is true only while the New PRD / Edit PRD tab is the visible one.
+   *
+   * The component stays mounted for the app's whole lifetime so that switching
+   * tabs never tears down the session, its terminal, or this component's state.
+   * When the tab is hidden the pane is `display:none`; going back to visible is
+   * what drives the refit below.
+   */
+  let { active = true }: { active?: boolean } = $props();
+
   let host = $state<HTMLDivElement | null>(null);
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
@@ -105,6 +115,17 @@
     }
   }
 
+  /**
+   * A hidden element (display:none) has no geometry, so xterm cannot size
+   * itself while the tab is in the background. Refit once it is on screen
+   * again — the ResizeObserver covers the same transition, but doing it here
+   * makes returning to a live session snap back immediately rather than on the
+   * next stray layout tick.
+   */
+  $effect(() => {
+    if (active && sessionId && sessionId !== "pending") void ensureTerminal();
+  });
+
   onMount(() => {
     unsubscribe.push(
       onAuthorData((ev) => {
@@ -129,8 +150,10 @@
     for (const off of unsubscribe) off();
     unsubscribe = [];
     observer?.disconnect();
-    // Leaving the pane abandons the conversation rather than orphaning an agent
-    // holding a PTY with nothing attached to it.
+    // Only reached when the pane itself is torn down — the app closing, not an
+    // ordinary tab switch, which now leaves this component mounted and hidden.
+    // Releasing the session here is the existing close-session behaviour: don't
+    // orphan an agent holding a PTY with nothing attached to it.
     if (sessionId && sessionId !== "pending" && !result) void api.author.stop(sessionId);
     term?.dispose();
   });
@@ -176,7 +199,7 @@
   }
 </script>
 
-<div class="author">
+<div class="author" class:hidden={!active}>
   {#if !sessionId}
     <div class="setup">
       <h2>Create a PRD</h2>
@@ -255,6 +278,9 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+  }
+  .author.hidden {
+    display: none;
   }
 
   .setup {
