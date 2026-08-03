@@ -2,6 +2,7 @@ import {
   api,
   isLogEvent,
   EventKind,
+  LoopState,
   onEvents,
   onReady,
   type Settings,
@@ -25,12 +26,26 @@ import { ingest } from "./logs.svelte";
 
 export type View = "stories" | "author" | "settings";
 
+/**
+ * A control request that has been sent but not yet resolved.
+ *
+ * The authoritative session state lives on the Go side; between firing a
+ * request and the backend confirming the new state there is a window in which
+ * the last-known snapshot is stale. Recording the in-flight transition — keyed
+ * by PRD so it survives switching away and back — lets the UI show `Starting`,
+ * `Pausing`, etc. and refuse a duplicate of the same action for that PRD.
+ */
+export type Transition = "starting" | "pausing" | "resuming" | "stopping";
+
 class AppState {
   project = $state<Project | null>(null);
   prds = $state<PRDSummary[]>([]);
   runs = $state<RunSnapshot[]>([]);
   questions = $state<Question[]>([]);
   config = $state<Settings | null>(null);
+
+  /** In-flight control transitions, keyed by PRD name. */
+  pending = $state<Record<string, Transition>>({});
 
   selectedPrd = $state<string | null>(null);
   selectedStory = $state<string | null>(null);
@@ -53,6 +68,40 @@ class AppState {
 
   get currentPrd(): PRDSummary | null {
     return this.prds.find((p) => p.name === this.selectedPrd) ?? null;
+  }
+
+  /** The unresolved control transition for the selected PRD, if any. */
+  get currentTransition(): Transition | null {
+    const prd = this.selectedPrd;
+    if (!prd) return null;
+    return this.pending[prd] ?? null;
+  }
+
+  /**
+   * What to show for the selected PRD. An in-flight transition wins over the
+   * last-known authoritative state so the UI never displays a stale `idle`
+   * while a Start is still resolving.
+   */
+  get displayState(): string {
+    return this.currentTransition ?? this.currentRun?.state ?? LoopState.StateIdle;
+  }
+
+  /** Controls are derived from the authoritative state, never from the last
+   *  request — a transition in flight disables every control for that PRD. */
+  get canStart(): boolean {
+    return !this.currentTransition && isStartable(this.currentRun?.state);
+  }
+
+  get canResume(): boolean {
+    return !this.currentTransition && this.currentRun?.state === LoopState.StatePaused;
+  }
+
+  get canPause(): boolean {
+    return !this.currentTransition && this.currentRun?.state === LoopState.StateRunning;
+  }
+
+  get canStop(): boolean {
+    return !this.currentTransition && isActive(this.currentRun?.state);
   }
 
   /** True while any PRD is running — drives the one animating element. */
@@ -226,28 +275,78 @@ export async function openProject(path: string): Promise<void> {
 export async function startRun(): Promise<void> {
   const prd = app.selectedPrd;
   if (!prd) return;
+  // At most one session per PRD: refuse while a Start (or any action) for this
+  // PRD is still resolving, or while a live session already exists.
+  if (app.pending[prd]) return;
+  const existing = app.runs.find((r) => r.prd === prd);
+  if (existing && isActive(existing.state)) return;
+
+  setPending(prd, "starting");
+  // Dismiss any stale start-error dialog for this PRD; a fresh failure re-sets it.
   app.error = null;
   try {
     await api.run.start({ prd } as never);
     await reloadRuns();
   } catch (err) {
     app.error = String(err);
+  } finally {
+    clearPending(prd);
   }
 }
 
-export async function pauseRun(): Promise<void> {
-  const run = app.currentRun;
-  if (run) await guard(() => api.run.pause(run.id));
+export function pauseRun(): Promise<void> {
+  return transition("pausing", (s) => s === LoopState.StateRunning, (id) => api.run.pause(id));
 }
 
-export async function resumeRun(): Promise<void> {
-  const run = app.currentRun;
-  if (run) await guard(() => api.run.resume(run.id));
+export function resumeRun(): Promise<void> {
+  return transition("resuming", (s) => s === LoopState.StatePaused, (id) => api.run.resume(id));
 }
 
-export async function stopRun(): Promise<void> {
+export function stopRun(): Promise<void> {
+  return transition("stopping", isActive, (id) => api.run.stop(id));
+}
+
+/**
+ * Fire a Pause/Resume/Stop and track it as an in-flight transition.
+ *
+ * The action only fires when the authoritative state allows it and no other
+ * request for the PRD is outstanding, so duplicate requests are impossible.
+ * On failure the run list is re-fetched to reconcile with whatever the backend
+ * actually did before the error is surfaced, leaving the controls valid for the
+ * reconciled state.
+ */
+async function transition(
+  kind: Transition,
+  allowed: (state: LoopState) => boolean,
+  fn: (id: string) => Promise<unknown>,
+): Promise<void> {
+  const prd = app.selectedPrd;
   const run = app.currentRun;
-  if (run) await guard(() => api.run.stop(run.id));
+  if (!prd || !run) return;
+  if (app.pending[prd]) return;
+  if (!allowed(run.state)) return;
+
+  setPending(prd, kind);
+  app.error = null;
+  try {
+    await fn(run.id);
+    await reloadRuns();
+  } catch (err) {
+    await reloadRuns();
+    app.error = String(err);
+  } finally {
+    clearPending(prd);
+  }
+}
+
+function setPending(prd: string, kind: Transition): void {
+  app.pending = { ...app.pending, [prd]: kind };
+}
+
+function clearPending(prd: string): void {
+  const next = { ...app.pending };
+  delete next[prd];
+  app.pending = next;
 }
 
 export async function adjustBudget(delta: number): Promise<void> {
@@ -270,6 +369,29 @@ async function guard(fn: () => Promise<unknown>): Promise<void> {
 }
 
 // -------------------------------------------------------------- utilities --
+
+/** States a PRD can be started from: no live session is in progress. */
+const STARTABLE = new Set<LoopState>([
+  LoopState.StateIdle,
+  LoopState.StateStopped,
+  LoopState.StateComplete,
+  LoopState.StateError,
+]);
+
+/** No session, or one in a terminal/never-started state, can be (re)started. */
+function isStartable(state: LoopState | undefined): boolean {
+  return state === undefined || STARTABLE.has(state);
+}
+
+/** A session that Pause/Resume/Stop can act on. Awaiting is running-but-blocked
+ *  on a question, so it is still stoppable. */
+function isActive(state: LoopState | undefined): boolean {
+  return (
+    state === LoopState.StateRunning ||
+    state === LoopState.StatePaused ||
+    state === LoopState.StateAwaiting
+  );
+}
 
 function truncate(s: string, n: number): string {
   const flat = s.replace(/\s+/g, " ").trim();

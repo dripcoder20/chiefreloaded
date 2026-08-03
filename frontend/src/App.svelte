@@ -27,9 +27,22 @@
   let logPanel = $state<ReturnType<typeof LogPanel> | null>(null);
 
   const run = $derived(app.currentRun);
-  // Named runState, not state: a local called `state` shadows the $state rune
-  // and every $state() call in the component silently becomes store access.
-  const runState = $derived(run?.state ?? "idle");
+  // The state to display comes from the store, which folds an in-flight
+  // transition over the authoritative session state.
+  const runState = $derived(app.displayState);
+  const transitioning = $derived(app.currentTransition);
+
+  const startLabel = $derived(
+    transitioning === "starting"
+      ? "Starting…"
+      : transitioning === "resuming"
+        ? "Resuming…"
+        : app.canResume
+          ? "Resume"
+          : "Start",
+  );
+  const pauseLabel = $derived(transitioning === "pausing" ? "Pausing…" : "Pause");
+  const stopLabel = $derived(transitioning === "stopping" ? "Stopping…" : "Stop");
 
   const elapsed = $derived.by(() => {
     if (!run?.startedAt) return "";
@@ -58,7 +71,7 @@
 
     switch (e.key) {
       case "s":
-        runState === "paused" ? void resumeRun() : void startRun();
+        app.canResume ? void resumeRun() : void startRun();
         break;
       case "p":
         void pauseRun();
@@ -164,13 +177,14 @@
 
         <span class="spacer"></span>
 
-        <button onclick={() => (runState === "paused" ? resumeRun() : startRun())}>
-          {runState === "paused" ? "Resume" : "Start"}
+        <button
+          onclick={() => (app.canResume ? resumeRun() : startRun())}
+          disabled={!app.canStart && !app.canResume}
+        >
+          {startLabel}
         </button>
-        <button onclick={pauseRun} disabled={runState !== "running"}>Pause</button>
-        <button onclick={stopRun} disabled={runState !== "running" && runState !== "paused"}>
-          Stop
-        </button>
+        <button onclick={pauseRun} disabled={!app.canPause}>{pauseLabel}</button>
+        <button onclick={stopRun} disabled={!app.canStop}>{stopLabel}</button>
       </div>
 
       <div class="tabs" role="tablist">
@@ -338,8 +352,14 @@
     background: var(--bg-raised);
     color: var(--fg-3);
   }
-  .badge.running {
+  .badge.running,
+  .badge.starting,
+  .badge.resuming {
     color: var(--accent);
+  }
+  .badge.pausing,
+  .badge.stopping {
+    color: var(--warn);
   }
   .badge.complete {
     color: var(--ok);
