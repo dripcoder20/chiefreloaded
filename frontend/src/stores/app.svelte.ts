@@ -3,6 +3,7 @@ import {
   isLogEvent,
   EventKind,
   onEvents,
+  onMenuNewPRD,
   onReady,
   type Settings,
   type LoopEvent,
@@ -72,6 +73,7 @@ let unsubscribe: Array<() => void> = [];
 /** Wire up the event stream and take the first snapshot. */
 export async function connect(): Promise<void> {
   unsubscribe.push(onReady(() => void refresh()));
+  unsubscribe.push(onMenuNewPRD(requestNewPRD));
   unsubscribe.push(
     onEvents((events) => {
       for (const ev of events) apply(ev);
@@ -183,6 +185,21 @@ async function reloadPrds(): Promise<void> {
     // A PRD being rewritten underneath us is normal — the agent edits progress
     // notes constantly. The next event will bring us back into sync.
   }
+}
+
+/**
+ * Open and focus the New PRD tab. The desktop File ▸ New PRD menu item and its
+ * ⌘N / Ctrl+N shortcut both route here, as does the in-window "New PRD" tab.
+ *
+ * It only reveals the tab — the authoring session is started from inside the
+ * pane, on an explicit action — so handling the same command more than once is
+ * a no-op rather than a second session. It is ignored while a modal question is
+ * awaiting an answer, so the shortcut cannot pull focus off a prompt that is
+ * blocking its run.
+ */
+export function requestNewPRD(): void {
+  if (app.questions.length > 0) return;
+  app.view = "author";
 }
 
 export async function selectPrd(name: string): Promise<void> {
