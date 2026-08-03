@@ -262,6 +262,8 @@ export const mockApi = {
         stories: name === "checkout" ? stories : [],
       }) as PRDDetail,
     progress: async () => ({}) as never,
+    openFile: async (): Promise<void> => {},
+    delete: async (): Promise<void> => {},
   },
   run: {
     start: async (): Promise<string> => {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -262,6 +263,57 @@ func (s *Session) PRD(name string) (PRDDetail, error) {
 		return PRDDetail{}, err
 	}
 	return loadPRDDetail(root, name)
+}
+
+// PRDPath returns the on-disk path of a PRD's prd.md, so the frontend can open
+// it in the user's default editor without knowing the .chief/ layout.
+func (s *Session) PRDPath(name string) (string, error) {
+	root, err := s.requireProject()
+	if err != nil {
+		return "", err
+	}
+	for _, p := range discoverPRDs(root) {
+		if p.Name == name {
+			return p.Path, nil
+		}
+	}
+	return "", fmt.Errorf("no PRD named %q", name)
+}
+
+// DeletePRD removes a PRD directory (.chief/prds/<name>) and everything in it,
+// then republishes the list.
+//
+// It refuses the legacy .chief/prd.md layout, whose PRD directory is .chief
+// itself — deleting that would take the whole project's Loop state with it.
+func (s *Session) DeletePRD(name string) error {
+	root, err := s.requireProject()
+	if err != nil {
+		return err
+	}
+
+	dir, err := s.prdDirToDelete(root, name)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return s.Rescan(context.Background())
+}
+
+// prdDirToDelete resolves the directory to remove for a PRD, guarding against
+// deleting anything outside .chief/prds/ and against the legacy layout.
+func (s *Session) prdDirToDelete(root, name string) (string, error) {
+	for _, p := range discoverPRDs(root) {
+		if p.Name != name {
+			continue
+		}
+		if p.Legacy {
+			return "", fmt.Errorf("cannot delete the legacy PRD %q from here", name)
+		}
+		return filepath.Join(root, chiefDir, prdsDir, name), nil
+	}
+	return "", fmt.Errorf("no PRD named %q", name)
 }
 
 // Progress returns a PRD's progress.md journal, keyed by story ID.

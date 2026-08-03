@@ -202,6 +202,42 @@ export function requestNewPRD(): void {
   app.view = "author";
 }
 
+/**
+ * Open a PRD for editing: select it and reveal the authoring tab, from which an
+ * edit session is started. Routed here from the PRD rail's action menus so the
+ * action always targets the row it was opened on, not whatever was last selected.
+ */
+export async function editPrd(name: string): Promise<void> {
+  await selectPrd(name);
+  app.view = "author";
+}
+
+/** Open a PRD's prd.md in the user's default editor. */
+export async function openPrdFile(name: string): Promise<void> {
+  try {
+    await api.prd.openFile(name);
+  } catch (err) {
+    app.error = String(err);
+  }
+}
+
+/**
+ * Delete a PRD and everything under it. Clears the selection when the deleted
+ * PRD was the selected one, so the rail does not point at a row that is gone.
+ */
+export async function deletePrd(name: string): Promise<void> {
+  try {
+    await api.prd.delete(name);
+    if (app.selectedPrd === name) {
+      app.selectedPrd = null;
+      app.detail = null;
+    }
+    await reloadPrds();
+  } catch (err) {
+    app.error = String(err);
+  }
+}
+
 export async function selectPrd(name: string): Promise<void> {
   app.selectedPrd = name;
   app.selectedStory = null;

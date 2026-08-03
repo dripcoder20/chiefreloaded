@@ -164,6 +164,8 @@ const wailsApi = {
     list: (): Promise<PRDSummary[]> => list(PRDService.List()),
     get: (name: string): Promise<PRDDetail> => PRDService.Get(name),
     progress: (name: string) => PRDService.Progress(name),
+    openFile: (name: string): Promise<void> => PRDService.OpenFile(name),
+    delete: (name: string): Promise<void> => PRDService.Delete(name),
   },
   run: {
     start: (req: StartRequest): Promise<string> => RunService.Start(req),
