@@ -29,11 +29,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Wails v3 alpha2 targets gtk4 and webkitgtk-6.0 on Linux, not the gtk3 /
+      # webkit2gtk-4.1 pair that v2 used. cgo resolves these through pkg-config
+      # for anything that imports the Wails runtime, which the root package does.
       - name: Linux webview dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       # actions/checkout clones submodules shallow and without tags, so
       # `git describe --tags` in third_party/chief falls back to a bare SHA and
@@ -86,15 +89,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # The wails3 CLI links against gtk4 and webkitgtk-6.0 — a different pair
-      # from the gtk3/webkit2gtk-4.1 the application itself targets — so both
-      # sets are needed to build it here.
+      # Building the wails3 CLI compiles the same cgo webview bindings, so it
+      # needs the gtk4 / webkitgtk-6.0 pair Wails v3 alpha2 targets on Linux.
       - name: Linux webview dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Generate TypeScript bindings
         run: |
