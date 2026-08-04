@@ -67,22 +67,22 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Menu and shortcut behavior is covered by automated tests on supported desktop platforms.
 
 ### US-004: Add PRD sidebar action menus
-**Status:** in-progress
+**Status:** done
 **Priority:** 4
 **Description:** As a user, I want a clear PRD sidebar and discoverable actions for each PRD so that I can create or manage PRDs without indirect navigation.
 
 **Acceptance Criteria:**
-- [ ] The PRD sidebar displays `New PRD` before the list of existing PRDs.
-- [ ] A visible line separator or styled divider separates `New PRD` from the existing PRD list.
-- [ ] Each existing PRD row has a three-dot overflow button that appears when the row is hovered or receives keyboard focus.
-- [ ] On touch-only devices, the three-dot button remains visible without requiring hover.
-- [ ] Activating the three-dot button opens a dropdown anchored to that button with `Edit PRD`, `Open markdown file`, and `Delete PRD`, in that order.
-- [ ] Right-clicking a PRD row opens a context menu with the same three actions in the same order.
-- [ ] Either menu operates on the PRD whose row or three-dot button opened it, even when a different PRD was previously selected.
-- [ ] Opening one PRD action menu closes any other open PRD action menu.
-- [ ] An open menu dismisses on outside click, `Escape`, focus loss, or completion of an action.
-- [ ] The three-dot button has an accessible name that identifies its PRD, and the button and every menu action are operable using only the keyboard.
-- [ ] Automated tests verify sidebar ordering, divider presence, hover and focus visibility, touch visibility, target selection, action parity between both menus, dismissal, and keyboard access.
+- [x] The PRD sidebar displays `New PRD` before the list of existing PRDs.
+- [x] A visible line separator or styled divider separates `New PRD` from the existing PRD list.
+- [x] Each existing PRD row has a three-dot overflow button that appears when the row is hovered or receives keyboard focus.
+- [x] On touch-only devices, the three-dot button remains visible without requiring hover.
+- [x] Activating the three-dot button opens a dropdown anchored to that button with `Edit PRD`, `Open markdown file`, and `Delete PRD`, in that order.
+- [x] Right-clicking a PRD row opens a context menu with the same three actions in the same order.
+- [x] Either menu operates on the PRD whose row or three-dot button opened it, even when a different PRD was previously selected.
+- [x] Opening one PRD action menu closes any other open PRD action menu.
+- [x] An open menu dismisses on outside click, `Escape`, focus loss, or completion of an action.
+- [x] The three-dot button has an accessible name that identifies its PRD, and the button and every menu action are operable using only the keyboard.
+- [x] Automated tests verify sidebar ordering, divider presence, hover and focus visibility, touch visibility, target selection, action parity between both menus, dismissal, and keyboard access.
 
 ### US-005: Edit a PRD through an authoring session
 **Priority:** 5

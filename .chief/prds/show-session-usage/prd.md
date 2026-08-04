@@ -25,117 +25,125 @@ The status-bar control and its detailed panel must expose all usage dimensions s
 ## 3. User Stories
 
 ### US-001: Normalize provider usage output
-**Status:** todo
+**Status:** done
 **Priority:** 1
 **Description:** As a developer, I want agent-provider usage output normalized into one model so that all later aggregation and UI behavior use consistent data.
 
 **Acceptance Criteria:**
-- [ ] The shared usage model can represent input, output, reasoning, cache-read, cache-write, and total token counts as independently optional non-negative integers.
-- [ ] The model can represent provider-reported cost, estimated cost, currency, context-window size, and the model identifier used for the request.
-- [ ] Claude, Codex, OpenCode, and Cursor parsers extract every usage field present in their supported structured output fixtures.
-- [ ] A missing provider field remains unavailable; it is not converted to `0`.
-- [ ] Malformed usage payloads do not terminate an active run and produce a diagnosable warning event or log entry.
-- [ ] Parser tests cover complete, partial, missing, malformed, and duplicate usage payloads for each provider.
+- [x] The shared usage model can represent input, output, reasoning, cache-read, cache-write, and total token counts as independently optional non-negative integers.
+- [x] The model can represent provider-reported cost, estimated cost, currency, context-window size, and the model identifier used for the request.
+- [x] Claude, Codex, OpenCode, and Cursor parsers extract every usage field present in their supported structured output fixtures.
+- [x] A missing provider field remains unavailable; it is not converted to `0`.
+- [x] Malformed usage payloads do not terminate an active run and produce a diagnosable warning event or log entry.
+- [x] Parser tests cover complete, partial, missing, malformed, and duplicate usage payloads for each provider.
 
 ### US-002: Attribute and aggregate usage
+**Status:** done
 **Priority:** 2
 **Description:** As a user, I want usage assigned to the correct attempt, story, and session so that the displayed totals reflect the work that consumed it.
 
 **Acceptance Criteria:**
-- [ ] Each normalized usage record carries a stable record ID or equivalent deduplication key, run ID, PRD name, story ID when applicable, attempt number, provider, model when reported, and timestamp.
-- [ ] Usage emitted during an agent attempt is attributed to that attempt's active story and run.
-- [ ] Retried and failed attempts remain included in story and session totals.
-- [ ] Pausing and resuming a run continues accumulating against the same session.
-- [ ] Replaying the same usage event or reconnecting the frontend does not increase any aggregate twice.
-- [ ] Aggregate tests verify story totals, session totals, general project totals, retries, failures, pause/resume behavior, and duplicate delivery.
+- [x] Each normalized usage record carries a stable record ID or equivalent deduplication key, run ID, PRD name, story ID when applicable, attempt number, provider, model when reported, and timestamp.
+- [x] Usage emitted during an agent attempt is attributed to that attempt's active story and run.
+- [x] Retried and failed attempts remain included in story and session totals.
+- [x] Pausing and resuming a run continues accumulating against the same session.
+- [x] Replaying the same usage event or reconnecting the frontend does not increase any aggregate twice.
+- [x] Aggregate tests verify story totals, session totals, general project totals, retries, failures, pause/resume behavior, and duplicate delivery.
 
 ### US-003: Persist project usage history
+**Status:** done
 **Priority:** 3
 **Description:** As a user, I want usage history to survive restarts so that general totals and past sessions remain useful over time.
 
 **Acceptance Criteria:**
-- [ ] Usage records and the metadata required to group them by run, PRD, story, provider, and model are stored under the open project's `.chief/` directory.
-- [ ] Writes are atomic so an interrupted write cannot replace valid history with a partial file.
-- [ ] Reopening a project restores completed and interrupted session usage without starting a run.
-- [ ] Opening a different project replaces the visible general total and history with that project's data.
-- [ ] Missing persisted usage data is treated as an empty history.
-- [ ] Invalid persisted data produces a visible, actionable error while leaving the PRD list and run controls usable.
-- [ ] Persistence tests cover save/load, restart recovery, project switching, missing files, invalid files, and concurrent usage updates.
+- [x] Usage records and the metadata required to group them by run, PRD, story, provider, and model are stored under the open project's `.chief/` directory.
+- [x] Writes are atomic so an interrupted write cannot replace valid history with a partial file.
+- [x] Reopening a project restores completed and interrupted session usage without starting a run.
+- [x] Opening a different project replaces the visible general total and history with that project's data.
+- [x] Missing persisted usage data is treated as an empty history.
+- [x] Invalid persisted data produces a visible, actionable error while leaving the PRD list and run controls usable.
+- [x] Persistence tests cover save/load, restart recovery, project switching, missing files, invalid files, and concurrent usage updates.
 
 ### US-004: Expose usage through session state and events
+**Status:** done
 **Priority:** 4
 **Description:** As a frontend developer, I want usage aggregates available through Loop's snapshot and ordered event stream so that the status bar stays current and recovers from dropped events.
 
 **Acceptance Criteria:**
-- [ ] The session read model exposes current story usage, current session usage, and general project usage.
-- [ ] A non-coalescible usage event is emitted after a usage record is accepted and aggregated.
-- [ ] Usage events identify the run and story to which the update belongs.
-- [ ] A fresh snapshot contains totals equal to those obtained by applying all accepted usage events.
-- [ ] Event replay followed by live events produces the same totals as a fresh snapshot and never double-counts usage.
-- [ ] Browser-development mock data includes active and historical usage for complete and partially supported providers.
+- [x] The session read model exposes current story usage, current session usage, and general project usage.
+- [x] A non-coalescible usage event is emitted after a usage record is accepted and aggregated.
+- [x] Usage events identify the run and story to which the update belongs.
+- [x] A fresh snapshot contains totals equal to those obtained by applying all accepted usage events.
+- [x] Event replay followed by live events produces the same totals as a fresh snapshot and never double-counts usage.
+- [x] Browser-development mock data includes active and historical usage for complete and partially supported providers.
 
 ### US-005: Show live usage in the status bar
+**Status:** done
 **Priority:** 5
 **Description:** As a user, I want key usage values continuously visible in the existing bottom status bar so that I can monitor consumption while an agent works.
 
 **Acceptance Criteria:**
-- [ ] When a PRD has an active or most-recent run, the existing bottom status bar shows current-story total tokens, current-session total tokens, and session cost when available.
-- [ ] Status-bar values update within one second of a usage update without requiring a page refresh or closing the log panel.
-- [ ] Token and currency values use compact, locale-aware formatting while the accessible label exposes the unabridged value; for example, `12.4k tokens` has an accessible value of `12,431 tokens`.
-- [ ] Unavailable fields display `—` or `Unavailable`, never `$0.00` or `0 tokens`.
-- [ ] When no usage has yet been reported for a new run, the status bar displays `Waiting for usage`.
-- [ ] The status bar remains legible at the application's supported minimum window width and does not obscure the activity ticker, running-count indicator, or keyboard-shortcut help.
-- [ ] The usage summary is keyboard focusable and exposes its expanded/collapsed state to assistive technology.
+- [x] When a PRD has an active or most-recent run, the existing bottom status bar shows current-story total tokens, current-session total tokens, and session cost when available.
+- [x] Status-bar values update within one second of a usage update without requiring a page refresh or closing the log panel.
+- [x] Token and currency values use compact, locale-aware formatting while the accessible label exposes the unabridged value; for example, `12.4k tokens` has an accessible value of `12,431 tokens`.
+- [x] Unavailable fields display `—` or `Unavailable`, never `$0.00` or `0 tokens`.
+- [x] When no usage has yet been reported for a new run, the status bar displays `Waiting for usage`.
+- [x] The status bar remains legible at the application's supported minimum window width and does not obscure the activity ticker, running-count indicator, or keyboard-shortcut help.
+- [x] The usage summary is keyboard focusable and exposes its expanded/collapsed state to assistive technology.
 
 ### US-006: Inspect usage by scope
+**Status:** done
 **Priority:** 6
 **Description:** As a user, I want a detailed usage panel for story, session, and general scopes so that I can understand where usage came from.
 
 **Acceptance Criteria:**
-- [ ] Activating the status-bar usage summary opens a panel without navigating away from the Stories view or interrupting the run.
-- [ ] The panel provides Story, Session, and General scope controls and clearly names the selected story, run, or project.
-- [ ] Each scope shows every supported dimension: input, output, reasoning, cache read, cache write, total tokens, cost, provider, model, context-window size, and context utilization.
-- [ ] For mixed providers, models, or currencies, totals are grouped rather than combined into a misleading single value.
-- [ ] Estimated costs are labeled `Estimated`; provider-reported costs are labeled `Reported`.
-- [ ] The panel explains unavailable values with the provider name and a concise reason when known.
-- [ ] The panel can be opened, operated, and dismissed using only the keyboard; focus returns to the status-bar trigger when dismissed.
+- [x] Activating the status-bar usage summary opens a panel without navigating away from the Stories view or interrupting the run.
+- [x] The panel provides Story, Session, and General scope controls and clearly names the selected story, run, or project.
+- [x] Each scope shows every supported dimension: input, output, reasoning, cache read, cache write, total tokens, cost, provider, model, context-window size, and context utilization.
+- [x] For mixed providers, models, or currencies, totals are grouped rather than combined into a misleading single value.
+- [x] Estimated costs are labeled `Estimated`; provider-reported costs are labeled `Reported`.
+- [x] The panel explains unavailable values with the provider name and a concise reason when known.
+- [x] The panel can be opened, operated, and dismissed using only the keyboard; focus returns to the status-bar trigger when dismissed.
 
 ### US-007: Warn about approaching limits and unusual spend
+**Status:** done
 **Priority:** 7
 **Description:** As a user, I want clear usage warnings so that I can intervene before an agent reaches a known limit or exceeds an expected cost.
 
 **Acceptance Criteria:**
-- [ ] Context utilization is calculated only when both the relevant token count and model context-window size are known.
-- [ ] The status bar and detail panel show a warning at 80% context utilization and a critical state at 95% by default.
-- [ ] Users can configure context warning and critical percentages and an optional per-session cost-warning amount in Settings.
-- [ ] The critical threshold must be greater than the warning threshold, and invalid settings cannot be saved.
-- [ ] A warning is informational and never automatically pauses or stops a run.
-- [ ] Unknown provider account quotas, subscription balances, or rate limits are labeled unavailable and do not generate false warnings.
-- [ ] Warning colors are accompanied by text or an icon with an accessible label and meet the application's existing contrast requirements.
+- [x] Context utilization is calculated only when both the relevant token count and model context-window size are known.
+- [x] The status bar and detail panel show a warning at 80% context utilization and a critical state at 95% by default.
+- [x] Users can configure context warning and critical percentages and an optional per-session cost-warning amount in Settings.
+- [x] The critical threshold must be greater than the warning threshold, and invalid settings cannot be saved.
+- [x] A warning is informational and never automatically pauses or stops a run.
+- [x] Unknown provider account quotas, subscription balances, or rate limits are labeled unavailable and do not generate false warnings.
+- [x] Warning colors are accompanied by text or an icon with an accessible label and meet the application's existing contrast requirements.
 
 ### US-008: Browse session and story history
+**Status:** done
 **Priority:** 8
 **Description:** As a user, I want to inspect prior usage by session and story so that I can compare completed work and identify expensive stories.
 
 **Acceptance Criteria:**
-- [ ] The General scope lists retained sessions newest first with run ID, PRD, provider/model, start time, end time or active state, token total, and cost when available.
-- [ ] Expanding a session lists its stories with story ID, title when available, attempts, token total, cost, and completion state.
-- [ ] Selecting a historical story shows its full usage-dimension breakdown without changing the active PRD or selected story in the main Stories view.
-- [ ] Active and interrupted sessions are visibly distinguished from completed, stopped, and failed sessions.
-- [ ] An empty project shows an explicit `No usage recorded for this project` state.
-- [ ] History rendering remains responsive with at least 1,000 sessions and 10,000 story aggregates in a test fixture.
+- [x] The General scope lists retained sessions newest first with run ID, PRD, provider/model, start time, end time or active state, token total, and cost when available.
+- [x] Expanding a session lists its stories with story ID, title when available, attempts, token total, cost, and completion state.
+- [x] Selecting a historical story shows its full usage-dimension breakdown without changing the active PRD or selected story in the main Stories view.
+- [x] Active and interrupted sessions are visibly distinguished from completed, stopped, and failed sessions.
+- [x] An empty project shows an explicit `No usage recorded for this project` state.
+- [x] History rendering remains responsive with at least 1,000 sessions and 10,000 story aggregates in a test fixture.
 
 ### US-009: Verify and document usage behavior
+**Status:** done
 **Priority:** 9
 **Description:** As a maintainer, I want end-to-end coverage and provider documentation so that usage reporting remains trustworthy as agent CLIs change.
 
 **Acceptance Criteria:**
-- [ ] An end-to-end test runs a scripted agent through multiple stories and attempts, then verifies live status-bar, session, story, and general totals.
-- [ ] An end-to-end restart test verifies that completed usage history reloads from disk.
-- [ ] Frontend tests cover loading, waiting, partial-data, mixed-provider, warning, critical, empty-history, and persistence-error states.
-- [ ] Documentation defines Story, Session, and General scopes and lists the supported fields and known limitations for each provider.
-- [ ] Documentation states that displayed cost is informational and distinguishes reported from estimated cost.
-- [ ] Go tests, frontend type checking, frontend tests, and the project's end-to-end suite pass.
+- [x] An end-to-end test runs a scripted agent through multiple stories and attempts, then verifies live status-bar, session, story, and general totals.
+- [x] An end-to-end restart test verifies that completed usage history reloads from disk.
+- [x] Frontend tests cover loading, waiting, partial-data, mixed-provider, warning, critical, empty-history, and persistence-error states.
+- [x] Documentation defines Story, Session, and General scopes and lists the supported fields and known limitations for each provider.
+- [x] Documentation states that displayed cost is informational and distinguishes reported from estimated cost.
+- [x] Go tests, frontend type checking, frontend tests, and the project's end-to-end suite pass.
 
 ## 4. Functional Requirements
 
