@@ -160,16 +160,17 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Integration tests cover Linear, GitHub Issues, no-publish mode, partial failure, retry, duplicate prevention, and PRD reference persistence.
 
 ### US-010: Document and verify the improved workflows
+**Status:** done
 **Priority:** 10
 **Description:** As a maintainer, I want workflow documentation and end-to-end coverage so that these UI improvements remain reliable across releases and platforms.
 
 **Acceptance Criteria:**
-- [ ] User documentation describes session persistence, `Shift+Enter`, File > New PRD, the PRD sidebar layout, repository launchers, three-dot and right-click actions, Edit PRD tab naming, both agent selectors, active-story agent and model indicators, stacked PRs, and issue publishing.
-- [ ] Documentation explains that issue publishing occurs after generation and that external issue references are written back into the PRD.
-- [ ] An end-to-end test creates a PRD with distinct authoring and implementation agents, switches tabs during authoring, uses multiline input, and verifies the preserved session.
-- [ ] An end-to-end test publishes multiple stories to a test tracker, verifies one external issue per story, and verifies the identifier and URL stored in each PRD story.
-- [ ] Platform-specific tests or test doubles cover native menu shortcuts, PRD action menus, opening markdown files with the operating system's default application, detecting supported local editors, and launching the repository with the correct path.
-- [ ] The project's formatting, type checking, unit tests, integration tests, and end-to-end tests pass.
+- [x] User documentation describes session persistence, `Shift+Enter`, File > New PRD, the PRD sidebar layout, repository launchers, three-dot and right-click actions, Edit PRD tab naming, both agent selectors, active-story agent and model indicators, stacked PRs, and issue publishing.
+- [x] Documentation explains that issue publishing occurs after generation and that external issue references are written back into the PRD.
+- [x] An end-to-end test creates a PRD with distinct authoring and implementation agents, switches tabs during authoring, uses multiline input, and verifies the preserved session.
+- [x] An end-to-end test publishes multiple stories to a test tracker, verifies one external issue per story, and verifies the identifier and URL stored in each PRD story.
+- [x] Platform-specific tests or test doubles cover native menu shortcuts, PRD action menus, opening markdown files with the operating system's default application, detecting supported local editors, and launching the repository with the correct path.
+- [x] The project's formatting, type checking, unit tests, integration tests, and end-to-end tests pass.
 
 ### US-011: Synchronize implementation controls with session state
 **Status:** done
