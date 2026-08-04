@@ -74,9 +74,28 @@ const store = vi.hoisted(() => ({
   app: {
     selectedPrd: null as string | null,
     authorTarget: { kind: "new" } as { kind: "new" } | { kind: "edit"; prd: string },
+    environment: {
+      agents: [
+        { name: "claude", available: true },
+        { name: "codex", available: true },
+      ],
+    },
+    agentDefaults: { authoring: "claude", implementation: "codex" },
+    destinations: [
+      { destination: "github", name: "GitHub Issues", available: true },
+      {
+        destination: "linear",
+        name: "Linear",
+        available: false,
+        reason: "set LINEAR_API_KEY to a Linear personal API key",
+      },
+    ],
+    publishing: null as unknown,
   },
   refresh: vi.fn(),
   selectPrd: vi.fn(),
+  savePrdWorkflow: vi.fn(),
+  publishIssues: vi.fn(),
 }));
 
 vi.mock("../stores/app.svelte", () => store);
@@ -113,6 +132,9 @@ async function endSession(outcome: Record<string, unknown>, prd = "checkout") {
 beforeEach(() => {
   store.app.selectedPrd = null;
   store.app.authorTarget = { kind: "new" };
+  store.app.publishing = null;
+  store.savePrdWorkflow.mockReset().mockResolvedValue(true);
+  store.publishIssues.mockReset().mockResolvedValue(null);
   bridge.start.mockReset();
   bridge.stop.mockReset();
   bridge.write.mockReset();
@@ -308,5 +330,114 @@ describe("edit sessions", () => {
     render(AuthorPane, { props: { active: true } });
     await waitFor(() => {});
     expect(bridge.start).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * US-007 / US-008 — the New PRD tab's per-phase agent selectors and workflow
+ * options: independent choices, resolved defaults shown rather than a blank,
+ * only installed agents offered, and unavailable trackers disabled in place
+ * with the missing configuration explained.
+ */
+describe("creation options", () => {
+  function selectFor(label: string): HTMLSelectElement {
+    return document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+  }
+
+  function labelled(view: ReturnType<typeof render>, text: string): HTMLSelectElement {
+    return view.getByText(text).closest("label")!.querySelector("select")!;
+  }
+
+  it("offers separate authoring and implementation agent selectors", () => {
+    const view = render(AuthorPane, { props: { active: true } });
+    expect(labelled(view, "Authoring agent")).toBeTruthy();
+    expect(labelled(view, "Implementation agent")).toBeTruthy();
+  });
+
+  // A blank meaning "whatever is configured" tells the user nothing; the
+  // resolved default is shown instead.
+  it("initialises each selector from its own resolved default", async () => {
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(labelled(view, "Authoring agent").value).toBe("claude"));
+    expect(labelled(view, "Implementation agent").value).toBe("codex");
+  });
+
+  it("changes one selector without moving the other", async () => {
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(labelled(view, "Authoring agent").value).toBe("claude"));
+
+    await fireEvent.change(labelled(view, "Authoring agent"), { target: { value: "codex" } });
+    expect(labelled(view, "Authoring agent").value).toBe("codex");
+    expect(labelled(view, "Implementation agent").value).toBe("codex");
+
+    await fireEvent.change(labelled(view, "Implementation agent"), {
+      target: { value: "claude" },
+    });
+    expect(labelled(view, "Implementation agent").value).toBe("claude");
+    expect(labelled(view, "Authoring agent").value).toBe("codex");
+  });
+
+  it("lists only installed agents", () => {
+    const view = render(AuthorPane, { props: { active: true } });
+    const options = [...labelled(view, "Authoring agent").options].map((o) => o.value);
+    expect(options).toEqual(["claude", "codex"]);
+  });
+
+  it("starts the authoring session with the chosen authoring agent", async () => {
+    bridge.start.mockResolvedValue(SESSION_ID);
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(labelled(view, "Authoring agent").value).toBe("claude"));
+
+    await fireEvent.change(labelled(view, "Authoring agent"), { target: { value: "codex" } });
+    await fireEvent.input(view.getByPlaceholderText("checkout"), {
+      target: { value: "checkout" },
+    });
+    await fireEvent.click(view.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(bridge.start).toHaveBeenCalled());
+    expect(bridge.start.mock.calls[0][0]).toMatchObject({ agent: "codex" });
+  });
+
+  // Stacking and the issue destination configure the later run; saving them
+  // must not create a branch, a pull request or an issue.
+  it("saves the implementation agent and workflow options with the PRD", async () => {
+    bridge.start.mockResolvedValue(SESSION_ID);
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(labelled(view, "Implementation agent").value).toBe("codex"));
+
+    await fireEvent.click(view.getByLabelText("Stack a pull request per user story"));
+    await fireEvent.change(labelled(view, "Publish issues to"), {
+      target: { value: "github" },
+    });
+    await fireEvent.input(view.getByPlaceholderText("checkout"), {
+      target: { value: "checkout" },
+    });
+    await fireEvent.click(view.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(store.savePrdWorkflow).toHaveBeenCalled());
+    expect(store.savePrdWorkflow).toHaveBeenCalledWith("checkout", {
+      implementationAgent: "codex",
+      stackPerStory: true,
+      issueDestination: "github",
+    });
+  });
+
+  it("defaults to not stacking and not publishing", () => {
+    const view = render(AuthorPane, { props: { active: true } });
+    const stack = view.getByLabelText("Stack a pull request per user story") as HTMLInputElement;
+    expect(stack.checked).toBe(false);
+    expect(labelled(view, "Publish issues to").value).toBe("");
+  });
+
+  // An unconfigured tracker is disabled in place with its setup explained,
+  // rather than being silently absent.
+  it("disables an unconfigured destination and explains what is missing", () => {
+    const view = render(AuthorPane, { props: { active: true } });
+    const options = [...labelled(view, "Publish issues to").options];
+
+    const linear = options.find((o) => o.value === "linear")!;
+    expect(linear.disabled).toBe(true);
+    expect(options.find((o) => o.value === "github")!.disabled).toBe(false);
+    expect(view.getByText(/LINEAR_API_KEY/)).toBeTruthy();
   });
 });

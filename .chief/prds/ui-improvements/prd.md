@@ -115,46 +115,49 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] A missing or unreadable markdown file produces an actionable error and does not open another file or directory.
 
 ### US-007: Select authoring and implementation agents
+**Status:** done
 **Priority:** 7
 **Description:** As a user, I want separate agent selectors for PRD authoring and implementation so that I can use the best agent for each phase.
 
 **Acceptance Criteria:**
-- [ ] The New PRD tab shows separate, clearly labeled `Authoring agent` and `Implementation agent` selectors before generation starts.
-- [ ] Each selector lists only installed and available agents supported for that phase.
-- [ ] The authoring selector defaults to the configured default authoring agent, and the implementation selector defaults to the configured default implementation agent; if only one general default exists, both initially use it.
-- [ ] Changing one selector does not change the other.
-- [ ] The chosen authoring agent is used when the PRD authoring session starts.
-- [ ] The chosen implementation agent is saved with the PRD and is preselected when implementation is started.
-- [ ] The implementation-start UI allows the user to change the implementation agent before confirming the run.
-- [ ] If a saved agent is no longer available, the UI reports that condition and requires a valid replacement before the affected phase can start.
+- [x] The New PRD tab shows separate, clearly labeled `Authoring agent` and `Implementation agent` selectors before generation starts.
+- [x] Each selector lists only installed and available agents supported for that phase.
+- [x] The authoring selector defaults to the configured default authoring agent, and the implementation selector defaults to the configured default implementation agent; if only one general default exists, both initially use it.
+- [x] Changing one selector does not change the other.
+- [x] The chosen authoring agent is used when the PRD authoring session starts.
+- [x] The chosen implementation agent is saved with the PRD and is preselected when implementation is started.
+- [x] The implementation-start UI allows the user to change the implementation agent before confirming the run.
+- [x] If a saved agent is no longer available, the UI reports that condition and requires a valid replacement before the affected phase can start.
 
 ### US-008: Configure PR and issue-publishing options
+**Status:** done
 **Priority:** 8
 **Description:** As a user, I want to choose a pull-request strategy and optional issue destination while creating a PRD so that its implementation workflow and external tracking are prepared from the start.
 
 **Acceptance Criteria:**
-- [ ] The New PRD tab includes a `Stack PR per user story` option that is off by default unless a saved application preference explicitly supplies another default.
-- [ ] The New PRD tab includes an issue-publishing choice with `Do not publish`, `Linear`, and `GitHub Issues` options.
-- [ ] Only destinations configured and authenticated for the current project are enabled; unavailable destinations explain what configuration is missing.
-- [ ] The chosen PR strategy and issue destination are visible for review before PRD generation begins.
-- [ ] The chosen PR strategy is saved as PRD workflow metadata and is available to the later implementation workflow; selecting it does not start implementation or create pull requests.
-- [ ] Selecting `Do not publish` causes PRD generation to perform no Linear or GitHub write operations.
-- [ ] Configuration and validation tests cover each option and missing integration credentials.
+- [x] The New PRD tab includes a `Stack PR per user story` option that is off by default unless a saved application preference explicitly supplies another default.
+- [x] The New PRD tab includes an issue-publishing choice with `Do not publish`, `Linear`, and `GitHub Issues` options.
+- [x] Only destinations configured and authenticated for the current project are enabled; unavailable destinations explain what configuration is missing.
+- [x] The chosen PR strategy and issue destination are visible for review before PRD generation begins.
+- [x] The chosen PR strategy is saved as PRD workflow metadata and is available to the later implementation workflow; selecting it does not start implementation or create pull requests.
+- [x] Selecting `Do not publish` causes PRD generation to perform no Linear or GitHub write operations.
+- [x] Configuration and validation tests cover each option and missing integration credentials.
 
 ### US-009: Publish generated user stories as issues and record references
+**Status:** done
 **Priority:** 9
 **Description:** As a user, I want generated user stories published to my selected tracker and linked back to the PRD so that the PRD and external work items remain traceable.
 
 **Acceptance Criteria:**
-- [ ] When Linear or GitHub Issues is selected, publishing begins only after the generated PRD has been successfully saved.
-- [ ] The system creates exactly one issue for each generated user story, using the story title and description and including its acceptance criteria.
-- [ ] Successfully created issues are not duplicated when publishing is retried after a partial failure; the system uses stored external references or an equivalent idempotency mechanism.
-- [ ] After each issue is created, the saved PRD user story records the destination, human-readable issue identifier, and clickable issue URL in a consistent `External Issue` metadata line.
-- [ ] The issue reference is attached to the matching user story and is not written to another story when responses complete out of order.
-- [ ] PRD file updates are atomic so an interrupted write does not corrupt or truncate the generated PRD.
-- [ ] A partial publishing failure reports which stories succeeded and failed, preserves references for successful stories, and offers a retry for failed stories only.
-- [ ] Closing or switching tabs while publishing is in progress does not cancel publishing; current progress is visible when the user returns.
-- [ ] Integration tests cover Linear, GitHub Issues, no-publish mode, partial failure, retry, duplicate prevention, and PRD reference persistence.
+- [x] When Linear or GitHub Issues is selected, publishing begins only after the generated PRD has been successfully saved.
+- [x] The system creates exactly one issue for each generated user story, using the story title and description and including its acceptance criteria.
+- [x] Successfully created issues are not duplicated when publishing is retried after a partial failure; the system uses stored external references or an equivalent idempotency mechanism.
+- [x] After each issue is created, the saved PRD user story records the destination, human-readable issue identifier, and clickable issue URL in a consistent `External Issue` metadata line.
+- [x] The issue reference is attached to the matching user story and is not written to another story when responses complete out of order.
+- [x] PRD file updates are atomic so an interrupted write does not corrupt or truncate the generated PRD.
+- [x] A partial publishing failure reports which stories succeeded and failed, preserves references for successful stories, and offers a retry for failed stories only.
+- [x] Closing or switching tabs while publishing is in progress does not cancel publishing; current progress is visible when the user returns.
+- [x] Integration tests cover Linear, GitHub Issues, no-publish mode, partial failure, retry, duplicate prevention, and PRD reference persistence.
 
 ### US-010: Document and verify the improved workflows
 **Priority:** 10

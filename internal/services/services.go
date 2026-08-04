@@ -132,6 +132,39 @@ func (p *PRDService) OpenFile(name string) error {
 // Delete removes a PRD directory and everything in it.
 func (p *PRDService) Delete(name string) error { return p.s.DeletePRD(name) }
 
+// Workflow returns a PRD's implementation agent, stacking and issue settings.
+func (p *PRDService) Workflow(name string) (session.PRDWorkflow, error) {
+	return p.s.PRDWorkflowFor(name)
+}
+
+// SaveWorkflow stores a PRD's workflow settings. It starts nothing.
+func (p *PRDService) SaveWorkflow(name string, w session.PRDWorkflow) error {
+	return p.s.SavePRDWorkflow(name, w)
+}
+
+// Issues returns the external issues already created for a PRD's stories.
+func (p *PRDService) Issues(name string) (map[string]session.IssueRef, error) {
+	return p.s.PublishedIssues(name)
+}
+
+// Publish creates one external issue per user story and records the reference.
+func (p *PRDService) Publish(name string) (session.PublishReport, error) {
+	return p.s.PublishIssues(context.Background(), name)
+}
+
+// AgentDefaults reports the resolved per-phase agent defaults.
+func (p *ProjectService) AgentDefaults() session.AgentDefaults {
+	return session.AgentDefaults{
+		Authoring:      p.s.DefaultAuthoringAgent(),
+		Implementation: p.s.DefaultImplementationAgent(),
+	}
+}
+
+// IssueDestinations reports which trackers this project can publish to.
+func (p *ProjectService) IssueDestinations() []session.DestinationStatus {
+	return p.s.IssueDestinations(context.Background())
+}
+
 // RunService starts and controls runs.
 type RunService struct{ s *session.Session }
 

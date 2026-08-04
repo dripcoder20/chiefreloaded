@@ -131,6 +131,14 @@ let run: RunSnapshot = {
   pendingGitErrors: 0,
 } as RunSnapshot;
 
+// Per-PRD workflow settings, which the New PRD tab writes and the run toolbar
+// reads back. Held in a variable so a save round-trips in browser dev.
+let mockWorkflow = {
+  implementationAgent: "codex",
+  stackPerStory: false,
+  issueDestination: "",
+};
+
 // ------------------------------------------------------------------- usage --
 //
 // Browser development needs usage that looks like a real project's history, not
@@ -689,6 +697,20 @@ export const mockApi = {
       }
     },
     openOnGitHub: async (): Promise<void> => {},
+    agentDefaults: async () =>
+      ({ authoring: "claude", implementation: "codex" }) as never,
+    // One configured destination and one that is not, so browser dev shows both
+    // an enabled option and a disabled one explaining its setup.
+    issueDestinations: async () =>
+      [
+        {
+          destination: "linear",
+          name: "Linear",
+          available: false,
+          reason: "set LINEAR_API_KEY to a Linear personal API key",
+        },
+        { destination: "github", name: "GitHub Issues", available: true },
+      ] as never,
   },
   prd: {
     list: async (): Promise<PRDSummary[]> => [summary, docs],
@@ -701,6 +723,28 @@ export const mockApi = {
     progress: async () => ({}) as never,
     openFile: async (): Promise<void> => {},
     delete: async (): Promise<void> => {},
+    workflow: async () => mockWorkflow as never,
+    saveWorkflow: async (_name: string, w: unknown): Promise<void> => {
+      mockWorkflow = w as typeof mockWorkflow;
+    },
+    issues: async () => ({}) as never,
+    publish: async (name: string) =>
+      ({
+        prd: name,
+        results: [
+          {
+            storyId: "US-001",
+            ref: {
+              destination: "github",
+              identifier: "#41",
+              url: "https://github.com/acme/checkout/issues/41",
+            },
+            skipped: false,
+          },
+          { storyId: "US-002", error: "rate limited", skipped: false },
+        ],
+        failed: ["US-002"],
+      }) as never,
   },
   run: {
     start: async (): Promise<string> => {

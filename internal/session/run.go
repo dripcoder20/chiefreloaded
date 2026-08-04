@@ -121,7 +121,20 @@ func (s *Session) Start(ctx context.Context, req StartRequest) (string, error) {
 	}
 	s.mu.Unlock()
 
-	provider, err := s.resolveProvider(req.Provider)
+	// req.Provider is the confirmation step's override; without one the PRD's own
+	// saved implementation agent applies, then the configured default. A saved
+	// agent that is no longer installed is refused here rather than quietly
+	// replaced, so the run cannot proceed under a different agent than the PRD
+	// was configured for.
+	agentName := req.Provider
+	if agentName == "" {
+		agentName, err = s.ResolveImplementationAgent(req.PRD)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	provider, err := s.resolveProvider(agentName)
 	if err != nil {
 		return "", err
 	}

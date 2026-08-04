@@ -6,7 +6,12 @@ import {
   onEvents,
   onMenuNewPRD,
   onReady,
+  type AgentDefaults,
   type AppStatus,
+  type DestinationStatus,
+  type Environment,
+  type PRDWorkflow,
+  type PublishReport,
   type Settings,
   type LoopEvent,
   type PRDDetail,
@@ -120,6 +125,20 @@ class AppState {
 
   /** The PRD a delete confirmation is currently asking about, if any. */
   pendingDelete = $state<string | null>(null);
+
+  /**
+   * The detected tooling, including which agent CLIs are installed. The agent
+   * selectors list only these: offering an agent that is not on the machine
+   * produces a failure at start time instead of at choice time.
+   */
+  environment = $state<Environment | null>(null);
+
+  /** The resolved per-phase agent defaults, for the New PRD selectors. */
+  agentDefaults = $state<AgentDefaults | null>(null);
+  /** Which issue trackers this project can publish to, and why not when it cannot. */
+  destinations = $state<DestinationStatus[]>([]);
+  /** The most recent publishing outcome, shown per story. */
+  publishing = $state<PublishReport | null>(null);
 
   /** Which local editors are installed, for the repository launchers. */
   localApps = $state<AppStatus[]>([]);
@@ -252,6 +271,7 @@ export async function connect(): Promise<void> {
   setInterval(() => (app.now = Date.now()), 1000);
   await refresh();
   void reloadLocalApps();
+  void reloadCreationOptions();
   app.connected = true;
 }
 
@@ -269,6 +289,7 @@ export async function refresh(): Promise<void> {
     app.runs = snap.runs ?? [];
     app.questions = snap.questions ?? [];
     app.usage = (snap as { usage?: UsageReport }).usage ?? null;
+    app.environment = snap.environment ?? null;
 
     if (!app.selectedPrd && app.prds.length > 0) {
       await selectPrd(app.prds[0].name);
@@ -493,6 +514,61 @@ export async function openInApp(target: string): Promise<void> {
   }
 }
 
+/**
+ * Load the resolved per-phase agent defaults and which trackers are configured.
+ *
+ * The defaults are resolved on the Go side so the selectors can show the actual
+ * agent rather than a blank that ambiguously means "whatever is configured".
+ */
+export async function reloadCreationOptions(): Promise<void> {
+  try {
+    app.agentDefaults = await api.project.agentDefaults();
+  } catch {
+    app.agentDefaults = null;
+  }
+  try {
+    app.destinations = await api.project.issueDestinations();
+  } catch {
+    app.destinations = [];
+  }
+}
+
+/**
+ * Save a PRD's workflow settings.
+ *
+ * This configures the later implementation run and nothing else: no branch, no
+ * pull request and no tracker write happens here.
+ */
+export async function savePrdWorkflow(name: string, workflow: PRDWorkflow): Promise<boolean> {
+  try {
+    await api.prd.saveWorkflow(name, workflow);
+    return true;
+  } catch (err) {
+    app.error = String(err);
+    return false;
+  }
+}
+
+/**
+ * Publish a PRD's user stories to the configured tracker.
+ *
+ * Reports per-story outcomes rather than one verdict: a partial failure must
+ * keep the references it did create and identify only the stories to retry.
+ */
+export async function publishIssues(name: string): Promise<PublishReport | null> {
+  try {
+    const report = await api.prd.publish(name);
+    app.publishing = report;
+    if (report.failed?.length) {
+      app.error = `${report.failed.length} of ${report.results.length} stories could not be published; retry to attempt only those.`;
+    }
+    return report;
+  } catch (err) {
+    app.error = String(err);
+    return null;
+  }
+}
+
 /** Load which editors are installed, for the AI IDE dropdown's secondary text. */
 export async function reloadLocalApps(): Promise<void> {
   try {
@@ -542,7 +618,15 @@ export async function openProject(path: string): Promise<void> {
 
 // ------------------------------------------------------------------- runs --
 
-export async function startRun(): Promise<void> {
+/**
+ * Start implementing the selected PRD.
+ *
+ * `agent` overrides the PRD's saved implementation agent for this run only; the
+ * confirmation step passes it when the user changes their mind at the last
+ * moment. Without one, the Go side resolves the PRD's own choice and refuses if
+ * that agent has since been uninstalled rather than substituting another.
+ */
+export async function startRun(agent?: string): Promise<void> {
   const prd = app.selectedPrd;
   if (!prd) return;
   // At most one session per PRD: refuse while a Start (or any action) for this
@@ -555,7 +639,7 @@ export async function startRun(): Promise<void> {
   // Dismiss any stale start-error dialog for this PRD; a fresh failure re-sets it.
   app.error = null;
   try {
-    await api.run.start({ prd } as never);
+    await api.run.start({ prd, provider: agent || undefined } as never);
     await reloadRuns();
   } catch (err) {
     app.error = String(err);

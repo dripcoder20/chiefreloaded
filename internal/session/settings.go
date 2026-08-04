@@ -49,9 +49,15 @@ type GitSettings struct {
 }
 
 // AgentSettings selects the coding agent CLI.
+//
+// Provider is the general default. Authoring and Implementation are the
+// per-phase overrides; either being empty means "use Provider", which is what
+// keeps a project that has only ever set one agent working unchanged.
 type AgentSettings struct {
-	Provider string `json:"provider"`
-	CLIPath  string `json:"cliPath"`
+	Provider       string `json:"provider"`
+	CLIPath        string `json:"cliPath"`
+	Authoring      string `json:"authoring,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
 }
 
 // WorktreeSettings configures newly created worktrees.
@@ -77,7 +83,12 @@ func settingsFrom(c config.LoopConfig) Settings {
 			RequireWorktree: c.Git.RequireWorktree,
 			VerifyCommit:    c.Git.VerifyCommit,
 		},
-		Agent:      AgentSettings{Provider: c.Agent.Provider, CLIPath: c.Agent.CLIPath},
+		Agent: AgentSettings{
+			Provider:       c.Agent.Provider,
+			CLIPath:        c.Agent.CLIPath,
+			Authoring:      c.Agents.Authoring,
+			Implementation: c.Agents.Implementation,
+		},
 		Worktree:   WorktreeSettings{Setup: c.Worktree.Setup},
 		OnComplete: OnCompleteSettings{Push: c.OnComplete.Push, CreatePR: c.OnComplete.CreatePR},
 		Usage: UsageSettings{
@@ -99,6 +110,8 @@ func (s Settings) toConfig() config.LoopConfig {
 	c.Git.VerifyCommit = s.Git.VerifyCommit
 	c.Agent.Provider = s.Agent.Provider
 	c.Agent.CLIPath = s.Agent.CLIPath
+	c.Agents.Authoring = s.Agent.Authoring
+	c.Agents.Implementation = s.Agent.Implementation
 	c.Worktree.Setup = s.Worktree.Setup
 	c.OnComplete.Push = s.OnComplete.Push
 	c.OnComplete.CreatePR = s.OnComplete.CreatePR
