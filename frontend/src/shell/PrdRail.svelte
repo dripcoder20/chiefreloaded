@@ -7,6 +7,8 @@
     editPrd,
     openPrdFile,
     deletePrd,
+    openOnGitHub,
+    openInApp,
   } from "../stores/app.svelte";
 
   /**
@@ -134,6 +136,63 @@
 
   function onWindowKeydown(event: KeyboardEvent): void {
     if (menu && event.key === "Escape") closeMenu();
+    if (ideOpen && event.key === "Escape") closeIde();
+  }
+
+  // --- repository launchers -------------------------------------------------
+
+  /**
+   * Every AI IDE is listed whether or not it is installed. Hiding an entry would
+   * leave a user who expected it there with no control to activate and therefore
+   * no explanation; selecting an unavailable one produces the alert that names
+   * what to install.
+   */
+  const IDES = [
+    { app: "claude", label: "Claude" },
+    { app: "cursor", label: "Cursor" },
+    { app: "codex", label: "Codex" },
+  ];
+
+  let ideOpen = $state(false);
+  let ideMenuEl = $state<HTMLDivElement | null>(null);
+  let ideButtonEl = $state<HTMLButtonElement | null>(null);
+
+  function statusOf(target: string): string {
+    const found = app.localApps.find((a) => a.app === target);
+    if (!found) return "";
+    return found.available ? "" : "not installed";
+  }
+
+  function closeIde(): void {
+    ideOpen = false;
+  }
+
+  async function toggleIde(): Promise<void> {
+    ideOpen = !ideOpen;
+    if (!ideOpen) return;
+    await tick();
+    ideMenuEl?.querySelector<HTMLButtonElement>("[role='menuitem']")?.focus();
+  }
+
+  async function launchIde(target: string): Promise<void> {
+    closeIde();
+    ideButtonEl?.focus();
+    await openInApp(target);
+  }
+
+  function onIdeKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeIde();
+      ideButtonEl?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...(ideMenuEl?.querySelectorAll<HTMLButtonElement>("[role='menuitem']") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    items[(at + delta + items.length) % items.length]?.focus();
   }
 </script>
 
@@ -146,6 +205,56 @@
     <span class="plus" aria-hidden="true">+</span>
     New PRD
   </button>
+
+  <!-- Repository launchers sit with New PRD, above the divider, so the divider
+       still separates "things you do to the project" from the PRD list. -->
+  <div class="launchers">
+    <button class="launch" title="Open GitHub repository" aria-label="Open GitHub repository" onclick={openOnGitHub}>
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+      </svg>
+    </button>
+
+    <button class="launch" title="Open in VS Code" aria-label="Open in VS Code" onclick={() => openInApp("vscode")}>
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+        <path d="M11.6.29 6.4 5.13 3.2 2.7 2 3.24v9.52l1.2.54 3.2-2.43 5.2 4.84L15 14.5v-13L11.6.29ZM3.5 10.6V5.4L6 8l-2.5 2.6Zm8.2 1.7L7.9 8l3.8-4.3v8.6Z" />
+      </svg>
+    </button>
+
+    <!-- A neutral icon: the dropdown must not imply one of the three is chosen. -->
+    <button
+      bind:this={ideButtonEl}
+      class="launch"
+      title="Open in AI IDE"
+      aria-label="Open in AI IDE"
+      aria-haspopup="menu"
+      aria-expanded={ideOpen}
+      onclick={toggleIde}
+    >
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+        <path d="M8 1.2 9.5 5 13.3 6.5 9.5 8 8 11.8 6.5 8 2.7 6.5 6.5 5 8 1.2ZM12.7 10.2l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5-1.5-.6 1.5-.6.6-1.5Z" />
+      </svg>
+    </button>
+
+    {#if ideOpen}
+      <div
+        bind:this={ideMenuEl}
+        class="ide-menu"
+        role="menu"
+        tabindex="-1"
+        aria-label="Open the repository in an AI IDE"
+        onkeydown={onIdeKeydown}
+      >
+        {#each IDES as ide (ide.app)}
+          {@const note = statusOf(ide.app)}
+          <button role="menuitem" onclick={() => launchIde(ide.app)}>
+            <span>{ide.label}</span>
+            {#if note}<span class="note">{note}</span>{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="divider" role="separator"></div>
 
@@ -259,6 +368,75 @@
   .plus {
     font-size: 14px;
     line-height: 1;
+    color: var(--fg-3);
+  }
+
+  /* A compact group beside New PRD, which stays the primary sidebar action. */
+  .launchers {
+    position: relative;
+    display: flex;
+    gap: 2px;
+    margin: 0 8px 8px;
+  }
+
+  .launch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 24px;
+    padding: 0;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    color: var(--fg-3);
+    cursor: default;
+  }
+  .launch:hover,
+  .launch:focus-visible,
+  .launch[aria-expanded="true"] {
+    color: var(--fg-1);
+    border-color: var(--border);
+    background: var(--bg-raised);
+  }
+
+  .ide-menu {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 2px);
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .ide-menu button {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 10px;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--fg-2);
+    font: inherit;
+    text-align: left;
+    cursor: default;
+  }
+  .ide-menu button:hover,
+  .ide-menu button:focus-visible {
+    background: var(--bg-app);
+    color: var(--fg-1);
+  }
+  /* Installation status is secondary text only; the entry stays selectable so
+     activating it can raise the alert that names what to install. */
+  .note {
+    font-size: 10.5px;
     color: var(--fg-3);
   }
 

@@ -6,6 +6,7 @@ import {
   onEvents,
   onMenuNewPRD,
   onReady,
+  type AppStatus,
   type Settings,
   type LoopEvent,
   type PRDDetail,
@@ -96,6 +97,11 @@ class AppState {
    * reconnected event is idempotent.
    */
   usage = $state<UsageReport | null>(null);
+
+  /** Which local editors are installed, for the repository launchers. */
+  localApps = $state<AppStatus[]>([]);
+  /** True while a repository launch is in flight, so one click launches once. */
+  launching = $state(false);
 
   /** Most recent agent output, for the status bar ticker. */
   activity = $state("");
@@ -222,6 +228,7 @@ export async function connect(): Promise<void> {
 
   setInterval(() => (app.now = Date.now()), 1000);
   await refresh();
+  void reloadLocalApps();
   app.connected = true;
 }
 
@@ -388,6 +395,54 @@ export async function deletePrd(name: string): Promise<void> {
     await reloadPrds();
   } catch (err) {
     app.error = String(err);
+  }
+}
+
+/**
+ * Open the project's GitHub repository in the default browser.
+ *
+ * Resolving the remote is the Go side's job; a project with no GitHub remote
+ * comes back as an error and opens nothing rather than falling back to a URL
+ * that would point somewhere unrelated.
+ */
+export async function openOnGitHub(): Promise<void> {
+  if (app.launching) return;
+  app.launching = true;
+  try {
+    await api.project.openOnGitHub();
+  } catch (err) {
+    app.error = String(err);
+  } finally {
+    app.launching = false;
+  }
+}
+
+/**
+ * Open the repository root in a local editor.
+ *
+ * The guard is per activation rather than per app: overlapping UI and native
+ * events would otherwise launch the editor twice from one click.
+ */
+export async function openInApp(target: string): Promise<void> {
+  if (app.launching) return;
+  app.launching = true;
+  try {
+    await api.project.openInApp(target);
+  } catch (err) {
+    app.error = String(err);
+  } finally {
+    app.launching = false;
+  }
+}
+
+/** Load which editors are installed, for the AI IDE dropdown's secondary text. */
+export async function reloadLocalApps(): Promise<void> {
+  try {
+    app.localApps = await api.project.localApps();
+  } catch {
+    // Detection is advisory: a failure leaves the entries selectable, and
+    // activating one still produces the real, actionable error.
+    app.localApps = [];
   }
 }
 

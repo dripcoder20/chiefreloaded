@@ -79,6 +79,27 @@ func (p *ProjectService) SaveConfig(v session.Settings) error { return p.s.SaveS
 // Rescan re-reads the PRDs from disk.
 func (p *ProjectService) Rescan() error { return p.s.Rescan(context.Background()) }
 
+// LocalApps reports which supported editors are installed.
+func (p *ProjectService) LocalApps() []session.AppStatus { return p.s.LocalApps() }
+
+// OpenInApp opens the repository root in a local editor.
+func (p *ProjectService) OpenInApp(app string) error {
+	return p.s.OpenInApp(context.Background(), session.LocalApp(app))
+}
+
+// OpenOnGitHub opens the repository's GitHub page in the default browser.
+func (p *ProjectService) OpenOnGitHub() error {
+	url, err := p.s.GitHubURL(context.Background())
+	if err != nil {
+		return err
+	}
+	app := application.Get()
+	if app == nil {
+		return fmt.Errorf("the application is not running")
+	}
+	return app.Browser.OpenURL(url)
+}
+
 // PRDService reads PRDs and their progress journals.
 type PRDService struct{ s *session.Session }
 

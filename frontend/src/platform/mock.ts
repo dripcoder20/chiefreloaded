@@ -668,6 +668,24 @@ export const mockApi = {
       }) as never,
     saveConfig: async (): Promise<void> => {},
     rescan: async (): Promise<void> => {},
+    // A mixed installation, so browser dev exercises both the launch path and
+    // the "not installed" alert without anyone having to uninstall an editor.
+    localApps: async () =>
+      [
+        { app: "vscode", name: "VS Code", available: true },
+        { app: "claude", name: "Claude", available: true },
+        { app: "cursor", name: "Cursor", available: false },
+        { app: "codex", name: "Codex", available: false },
+      ] as never,
+    openInApp: async (app: string): Promise<void> => {
+      if (app === "cursor" || app === "codex") {
+        const name = app === "cursor" ? "Cursor" : "Codex";
+        throw new Error(
+          `${name} is not installed. Install it, then try opening the repository again.`,
+        );
+      }
+    },
+    openOnGitHub: async (): Promise<void> => {},
   },
   prd: {
     list: async (): Promise<PRDSummary[]> => [summary, docs],

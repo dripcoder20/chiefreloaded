@@ -19,6 +19,7 @@ import type { Spec as AuthorSpec } from "../../bindings/github.com/dripcoder/loo
 import type { Prompt } from "../../bindings/github.com/dripcoder/loop/internal/prompts/models";
 import { EventKind, LoopState } from "../../bindings/github.com/dripcoder/loop/internal/session/models";
 import type {
+  AppStatus,
   Environment,
   Event as LoopEvent,
   PRDDetail,
@@ -44,6 +45,7 @@ import {
 export { EventKind, LoopState };
 
 export type {
+  AppStatus,
   Environment,
   LoopEvent,
   PRDDetail,
@@ -159,6 +161,9 @@ const wailsApi = {
     getConfig: (): Promise<Settings> => ProjectService.GetConfig(),
     saveConfig: (v: Settings): Promise<void> => ProjectService.SaveConfig(v),
     rescan: (): Promise<void> => ProjectService.Rescan(),
+    localApps: (): Promise<AppStatus[]> => list(ProjectService.LocalApps()),
+    openInApp: (app: string): Promise<void> => ProjectService.OpenInApp(app),
+    openOnGitHub: (): Promise<void> => ProjectService.OpenOnGitHub(),
   },
   prd: {
     list: (): Promise<PRDSummary[]> => list(PRDService.List()),

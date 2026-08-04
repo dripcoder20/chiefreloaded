@@ -186,24 +186,25 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Automated tests cover an initial Start failure followed by a successful retry, stale error-dialog cleanup, duplicate Start prevention, control availability for every session state, and failures during Pause, Resume, and Stop.
 
 ### US-012: Open the repository in GitHub or a local editor
+**Status:** done
 **Priority:** 12
 **Description:** As a user, I want repository-launch shortcuts in the PRD sidebar so that I can quickly open the current project on GitHub, in VS Code, or in a supported AI IDE.
 
 **Acceptance Criteria:**
-- [ ] A repository-launcher group appears at the top of the PRD sidebar near `New PRD` without interrupting the visual separation between New PRD and the existing PRD list.
-- [ ] The group contains a GitHub icon button, a VS Code icon button, and an AI IDE icon button.
-- [ ] Every icon button has a visible tooltip and an accessible name that describes its action; repository launchers are operable using only the keyboard.
-- [ ] Selecting the GitHub button opens the current repository's configured GitHub remote in the user's default web browser.
-- [ ] The GitHub remote is converted to a valid HTTPS repository page whether the configured remote uses an HTTPS or SSH Git URL.
-- [ ] If the project has no GitHub remote, has a malformed remote, or uses a non-GitHub host, the application displays an actionable alert explaining that no GitHub repository is configured and does not open an unrelated URL.
-- [ ] Selecting the VS Code button first checks whether VS Code is installed and, when available, opens the current repository root in VS Code.
-- [ ] Selecting the AI IDE button opens a dropdown containing `Claude`, `Cursor`, and `Codex`, regardless of which applications are installed.
-- [ ] Selecting Claude, Cursor, or Codex first checks whether that specific application is installed and, when available, opens the current repository root in that application.
-- [ ] If VS Code or the selected AI IDE is not installed, the application displays an alert naming the unavailable application and explaining that it must be installed before the repository can be opened there.
-- [ ] Dismissing an unavailable-application alert leaves Loop and the current repository state unchanged.
-- [ ] If an application is detected but launching it fails, the application displays an actionable launch-failure alert that is distinguishable from the not-installed alert.
-- [ ] Activating a launcher once results in at most one browser tab or application-launch request.
-- [ ] Automated tests cover GitHub HTTPS and SSH remotes, missing and non-GitHub remotes, installed and unavailable applications, launch failures, duplicate-event prevention, dropdown keyboard navigation, and correct repository-path forwarding.
+- [x] A repository-launcher group appears at the top of the PRD sidebar near `New PRD` without interrupting the visual separation between New PRD and the existing PRD list.
+- [x] The group contains a GitHub icon button, a VS Code icon button, and an AI IDE icon button.
+- [x] Every icon button has a visible tooltip and an accessible name that describes its action; repository launchers are operable using only the keyboard.
+- [x] Selecting the GitHub button opens the current repository's configured GitHub remote in the user's default web browser.
+- [x] The GitHub remote is converted to a valid HTTPS repository page whether the configured remote uses an HTTPS or SSH Git URL.
+- [x] If the project has no GitHub remote, has a malformed remote, or uses a non-GitHub host, the application displays an actionable alert explaining that no GitHub repository is configured and does not open an unrelated URL.
+- [x] Selecting the VS Code button first checks whether VS Code is installed and, when available, opens the current repository root in VS Code.
+- [x] Selecting the AI IDE button opens a dropdown containing `Claude`, `Cursor`, and `Codex`, regardless of which applications are installed.
+- [x] Selecting Claude, Cursor, or Codex first checks whether that specific application is installed and, when available, opens the current repository root in that application.
+- [x] If VS Code or the selected AI IDE is not installed, the application displays an alert naming the unavailable application and explaining that it must be installed before the repository can be opened there.
+- [x] Dismissing an unavailable-application alert leaves Loop and the current repository state unchanged.
+- [x] If an application is detected but launching it fails, the application displays an actionable launch-failure alert that is distinguishable from the not-installed alert.
+- [x] Activating a launcher once results in at most one browser tab or application-launch request.
+- [x] Automated tests cover GitHub HTTPS and SSH remotes, missing and non-GitHub remotes, installed and unavailable applications, launch failures, duplicate-event prevention, dropdown keyboard navigation, and correct repository-path forwarding.
 
 ### US-013: Display the active story's implementation agent and model
 **Priority:** 13
