@@ -340,55 +340,64 @@ describe("edit sessions", () => {
  * with the missing configuration explained.
  */
 describe("creation options", () => {
-  function selectFor(label: string): HTMLSelectElement {
-    return document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+  /**
+   * The select inside the label carrying this text. Queried from the document
+   * rather than through RenderResult, whose generic instantiation does not line
+   * up between the Svelte and DOM testing-library versions here.
+   */
+  function labelled(text: string): HTMLSelectElement {
+    const label = [...document.querySelectorAll("label")].find((l) =>
+      l.textContent?.includes(text),
+    );
+    return label!.querySelector("select")!;
   }
 
-  function labelled(view: ReturnType<typeof render>, text: string): HTMLSelectElement {
-    return view.getByText(text).closest("label")!.querySelector("select")!;
+  /** The pane has exactly one checkbox: the stacked-PR option. */
+  function stackCheckbox(): HTMLInputElement {
+    return document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
   }
 
   it("offers separate authoring and implementation agent selectors", () => {
     const view = render(AuthorPane, { props: { active: true } });
-    expect(labelled(view, "Authoring agent")).toBeTruthy();
-    expect(labelled(view, "Implementation agent")).toBeTruthy();
+    expect(labelled("Authoring agent")).toBeTruthy();
+    expect(labelled("Implementation agent")).toBeTruthy();
   });
 
   // A blank meaning "whatever is configured" tells the user nothing; the
   // resolved default is shown instead.
   it("initialises each selector from its own resolved default", async () => {
     const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled(view, "Authoring agent").value).toBe("claude"));
-    expect(labelled(view, "Implementation agent").value).toBe("codex");
+    await waitFor(() => expect(labelled("Authoring agent").value).toBe("claude"));
+    expect(labelled("Implementation agent").value).toBe("codex");
   });
 
   it("changes one selector without moving the other", async () => {
     const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled(view, "Authoring agent").value).toBe("claude"));
+    await waitFor(() => expect(labelled("Authoring agent").value).toBe("claude"));
 
-    await fireEvent.change(labelled(view, "Authoring agent"), { target: { value: "codex" } });
-    expect(labelled(view, "Authoring agent").value).toBe("codex");
-    expect(labelled(view, "Implementation agent").value).toBe("codex");
+    await fireEvent.change(labelled("Authoring agent"), { target: { value: "codex" } });
+    expect(labelled("Authoring agent").value).toBe("codex");
+    expect(labelled("Implementation agent").value).toBe("codex");
 
-    await fireEvent.change(labelled(view, "Implementation agent"), {
+    await fireEvent.change(labelled("Implementation agent"), {
       target: { value: "claude" },
     });
-    expect(labelled(view, "Implementation agent").value).toBe("claude");
-    expect(labelled(view, "Authoring agent").value).toBe("codex");
+    expect(labelled("Implementation agent").value).toBe("claude");
+    expect(labelled("Authoring agent").value).toBe("codex");
   });
 
   it("lists only installed agents", () => {
     const view = render(AuthorPane, { props: { active: true } });
-    const options = [...labelled(view, "Authoring agent").options].map((o) => o.value);
+    const options = [...labelled("Authoring agent").options].map((o) => o.value);
     expect(options).toEqual(["claude", "codex"]);
   });
 
   it("starts the authoring session with the chosen authoring agent", async () => {
     bridge.start.mockResolvedValue(SESSION_ID);
     const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled(view, "Authoring agent").value).toBe("claude"));
+    await waitFor(() => expect(labelled("Authoring agent").value).toBe("claude"));
 
-    await fireEvent.change(labelled(view, "Authoring agent"), { target: { value: "codex" } });
+    await fireEvent.change(labelled("Authoring agent"), { target: { value: "codex" } });
     await fireEvent.input(view.getByPlaceholderText("checkout"), {
       target: { value: "checkout" },
     });
@@ -403,10 +412,10 @@ describe("creation options", () => {
   it("saves the implementation agent and workflow options with the PRD", async () => {
     bridge.start.mockResolvedValue(SESSION_ID);
     const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled(view, "Implementation agent").value).toBe("codex"));
+    await waitFor(() => expect(labelled("Implementation agent").value).toBe("codex"));
 
-    await fireEvent.click(view.getByLabelText("Stack a pull request per user story"));
-    await fireEvent.change(labelled(view, "Publish issues to"), {
+    await fireEvent.click(stackCheckbox());
+    await fireEvent.change(labelled("Publish issues to"), {
       target: { value: "github" },
     });
     await fireEvent.input(view.getByPlaceholderText("checkout"), {
@@ -424,16 +433,16 @@ describe("creation options", () => {
 
   it("defaults to not stacking and not publishing", () => {
     const view = render(AuthorPane, { props: { active: true } });
-    const stack = view.getByLabelText("Stack a pull request per user story") as HTMLInputElement;
+    const stack = stackCheckbox();
     expect(stack.checked).toBe(false);
-    expect(labelled(view, "Publish issues to").value).toBe("");
+    expect(labelled("Publish issues to").value).toBe("");
   });
 
   // An unconfigured tracker is disabled in place with its setup explained,
   // rather than being silently absent.
   it("disables an unconfigured destination and explains what is missing", () => {
     const view = render(AuthorPane, { props: { active: true } });
-    const options = [...labelled(view, "Publish issues to").options];
+    const options = [...labelled("Publish issues to").options];
 
     const linear = options.find((o) => o.value === "linear")!;
     expect(linear.disabled).toBe(true);

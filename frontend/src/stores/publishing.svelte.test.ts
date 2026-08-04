@@ -100,7 +100,7 @@ describe("publishIssues", () => {
     backend.publish.mockResolvedValue(PARTIAL);
     await publishIssues("checkout");
 
-    const succeeded = app.publishing!.results.find((r) => r.storyId === "US-001");
+    const succeeded = app.publishing!.results!.find((r) => r.storyId === "US-001");
     expect(succeeded?.ref?.identifier).toBe("#41");
     expect(app.publishing!.failed).toEqual(["US-002"]);
     expect(app.error).toContain("1 of 2");

@@ -559,8 +559,11 @@ export async function publishIssues(name: string): Promise<PublishReport | null>
   try {
     const report = await api.prd.publish(name);
     app.publishing = report;
+    // Go marshals an empty slice as null, so a report with nothing in it is a
+    // valid shape rather than a missing field.
+    const total = report.results?.length ?? 0;
     if (report.failed?.length) {
-      app.error = `${report.failed.length} of ${report.results.length} stories could not be published; retry to attempt only those.`;
+      app.error = `${report.failed.length} of ${total} stories could not be published; retry to attempt only those.`;
     }
     return report;
   } catch (err) {
