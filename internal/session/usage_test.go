@@ -589,3 +589,84 @@ func TestUsageSessionHistoryThroughRunEngineAndRestart(t *testing.T) {
 		t.Errorf("restored sessions = %+v, want one completed session", restored)
 	}
 }
+
+// --- US-013: the active session's agent and model ---------------------------
+
+// The model shown for an active story must come from the session's own output,
+// not from a configured default, and must reach both the event stream and a
+// freshly taken snapshot.
+func TestActiveRunReportsTheModelTheAgentNamed(t *testing.T) {
+	s, _, runID := startRun(t, oneStoryPRD, fakeagent.Behaviour{
+		Text: "working", WriteFile: "out.txt", FileBody: "x", Commit: true, Done: true,
+		Usage: &fakeagent.Usage{InputTokens: 10, OutputTokens: 5, Model: "claude-opus-4-8"},
+	})
+	if snap := waitFor(t, s, runID); snap.State != StateComplete {
+		t.Fatalf("state = %s, want complete", snap.State)
+	}
+
+	var found *RunSnapshot
+	for _, r := range s.Runs() {
+		if r.ID == runID {
+			cp := r
+			found = &cp
+		}
+	}
+	if found == nil {
+		t.Fatal("run is missing from the session")
+	}
+	if found.Model != "claude-opus-4-8" {
+		t.Errorf("model = %q, want the model the agent reported", found.Model)
+	}
+	if found.ModelUnavailable {
+		t.Error("a reported model must not also be marked unavailable")
+	}
+	if found.Provider == "" {
+		t.Error("the agent name should be reported alongside the model")
+	}
+	assertPublished(t, s, EvRunUpdated)
+}
+
+// A provider that reports usage but never names a model must show as
+// unavailable, which is a different thing from not yet resolved.
+func TestActiveRunMarksAnUnreportedModelUnavailable(t *testing.T) {
+	s, _, runID := startRun(t, oneStoryPRD, fakeagent.Behaviour{
+		Text: "working", WriteFile: "out.txt", FileBody: "x", Commit: true, Done: true,
+		Usage: &fakeagent.Usage{InputTokens: 10, OutputTokens: 5},
+	})
+	if snap := waitFor(t, s, runID); snap.State != StateComplete {
+		t.Fatalf("state = %s, want complete", snap.State)
+	}
+
+	for _, r := range s.Runs() {
+		if r.ID != runID {
+			continue
+		}
+		if r.Model != "" {
+			t.Errorf("model = %q, want it left unreported", r.Model)
+		}
+		if !r.ModelUnavailable {
+			t.Error("a provider that reported usage without a model must be marked unavailable")
+		}
+	}
+}
+
+// A run that has produced no usage at all is neither resolved nor unavailable:
+// the UI shows Resolving… for it, so neither flag may be set.
+func TestRunWithNoUsageLeavesTheModelUnresolved(t *testing.T) {
+	s, _, runID := startRun(t, oneStoryPRD, fakeagent.Behaviour{
+		Text: "working", WriteFile: "out.txt", FileBody: "x", Commit: true, Done: true,
+	})
+	if snap := waitFor(t, s, runID); snap.State != StateComplete {
+		t.Fatalf("state = %s, want complete", snap.State)
+	}
+
+	for _, r := range s.Runs() {
+		if r.ID != runID {
+			continue
+		}
+		if r.Model != "" || r.ModelUnavailable {
+			t.Errorf("model = %q unavailable = %v, want both unset (still resolving)",
+				r.Model, r.ModelUnavailable)
+		}
+	}
+}

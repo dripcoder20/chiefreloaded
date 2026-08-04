@@ -71,6 +71,9 @@ const (
 	EvRunStopped  EventKind = "run.stopped"
 	EvRunComplete EventKind = "run.complete"
 	EvRunError    EventKind = "run.error"
+	// EvRunUpdated carries a revised snapshot for a run whose state has not
+	// changed — the agent resolving which model it is using, for instance.
+	EvRunUpdated EventKind = "run.updated"
 
 	// Story lifecycle.
 	EvStoryStarted EventKind = "story.started"

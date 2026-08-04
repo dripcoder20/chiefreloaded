@@ -209,20 +209,21 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Automated tests cover GitHub HTTPS and SSH remotes, missing and non-GitHub remotes, installed and unavailable applications, launch failures, duplicate-event prevention, dropdown keyboard navigation, and correct repository-path forwarding.
 
 ### US-013: Display the active story's implementation agent and model
+**Status:** done
 **Priority:** 13
 **Description:** As a user, I want to see which agent and model are implementing an in-progress user story so that I can verify the execution configuration without leaving the PRD view.
 
 **Acceptance Criteria:**
-- [ ] When a user story enters an active implementation state, its visible story row or card displays an `Agent` value and a `Model` value.
-- [ ] The displayed values identify the agent and model actually assigned to the active implementation session, not merely the current application defaults or the values currently selected elsewhere in the UI.
-- [ ] Agent and model metadata remains visible while the story is starting, running, pausing, paused, resuming, or stopping.
-- [ ] If the implementation session exists but either value has not yet been resolved, the corresponding field displays `Resolving…` and does not show a potentially incorrect default.
-- [ ] If the session reports that an agent or model value is unavailable, the corresponding field displays `Unavailable` while preserving the other value when known.
-- [ ] A successful retry or restarted implementation updates the story to show the agent and model assigned to the new active session; delayed metadata from an earlier session cannot overwrite it.
-- [ ] Switching tabs, reopening the PRD, or remounting the story view restores the agent and model for any active implementation session.
-- [ ] When a story no longer has an active implementation session, the active Agent and Model indicator is removed from that story; this requirement does not add historical execution metadata.
-- [ ] Agent and model values are exposed as readable text, are available to assistive technology, and do not rely on icons, color, or tooltips alone.
-- [ ] Automated tests cover resolved, resolving, partially unavailable, paused, retried, restarted, remounted, and inactive story states, including protection from stale session metadata.
+- [x] When a user story enters an active implementation state, its visible story row or card displays an `Agent` value and a `Model` value.
+- [x] The displayed values identify the agent and model actually assigned to the active implementation session, not merely the current application defaults or the values currently selected elsewhere in the UI.
+- [x] Agent and model metadata remains visible while the story is starting, running, pausing, paused, resuming, or stopping.
+- [x] If the implementation session exists but either value has not yet been resolved, the corresponding field displays `Resolving…` and does not show a potentially incorrect default.
+- [x] If the session reports that an agent or model value is unavailable, the corresponding field displays `Unavailable` while preserving the other value when known.
+- [x] A successful retry or restarted implementation updates the story to show the agent and model assigned to the new active session; delayed metadata from an earlier session cannot overwrite it.
+- [x] Switching tabs, reopening the PRD, or remounting the story view restores the agent and model for any active implementation session.
+- [x] When a story no longer has an active implementation session, the active Agent and Model indicator is removed from that story; this requirement does not add historical execution metadata.
+- [x] Agent and model values are exposed as readable text, are available to assistive technology, and do not rely on icons, color, or tooltips alone.
+- [x] Automated tests cover resolved, resolving, partially unavailable, paused, retried, restarted, remounted, and inactive story states, including protection from stale session metadata.
 
 ## 4. Functional Requirements
 

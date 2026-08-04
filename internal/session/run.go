@@ -64,6 +64,13 @@ type run struct {
 	gitErrs  int
 	timings  map[string]time.Duration
 
+	// model is what the agent reported it is running, learned from its usage
+	// output. modelUnavailable records that usage arrived naming no model, which
+	// several provider CLIs never do — the distinction between "not yet" and
+	// "never" is the difference between showing Resolving… and Unavailable.
+	model            string
+	modelUnavailable bool
+
 	// active is the Loop currently running an attempt, so Stop can kill the
 	// subprocess immediately rather than waiting for it to finish.
 	active *chiefloop.Loop
@@ -466,11 +473,45 @@ func (r *run) recordUsage(storyID string, attempt int, u *chiefloop.Usage) {
 	if !r.sess.usage.add(rec) {
 		return
 	}
+	r.noteModel(u.Model)
 	r.sess.publish(Event{
 		Kind: EvUsage, RunID: r.id, PRD: r.prdName,
 		StoryID: storyID, Attempt: attempt,
 		Usage: ptr(rec), UsageReport: ptr(r.sess.usageReport()),
 	})
+}
+
+// noteModel records the model the agent reported it is running.
+//
+// Once a model is known it is kept: later payloads from the same session that
+// omit it are the provider being terse, not the model changing. A payload that
+// names none before any has been seen marks the value unavailable, which is a
+// different thing from not yet resolved and is displayed differently.
+//
+// It publishes a run update so a story that is already on screen picks the
+// value up without waiting for the next state change.
+func (r *run) noteModel(model string) {
+	r.mu.Lock()
+	changed := false
+	switch {
+	case model != "" && r.model != model:
+		r.model, r.modelUnavailable, changed = model, false, true
+	case model == "" && r.model == "" && !r.modelUnavailable:
+		r.modelUnavailable, changed = true, true
+	}
+	snap := r.snapshotLocked()
+	r.mu.Unlock()
+
+	if !changed {
+		return
+	}
+	// The retained snapshot has to carry it too, or a consumer that reconnects
+	// and takes a fresh Snapshot loses the model it had already been shown.
+	r.sess.mu.Lock()
+	r.sess.runs[r.id] = snap
+	r.sess.mu.Unlock()
+
+	r.sess.publish(Event{Kind: EvRunUpdated, RunID: r.id, PRD: r.prdName, Run: snap})
 }
 
 // providerName reports the resolved agent CLI name, or "" before one is set.
@@ -587,6 +628,8 @@ func (r *run) snapshotLocked() *RunSnapshot {
 	if r.provider != nil {
 		snap.Provider = r.provider.Name()
 	}
+	snap.Model = r.model
+	snap.ModelUnavailable = r.modelUnavailable
 	if !r.started.IsZero() {
 		snap.StartedAt = r.started.UnixMilli()
 	}

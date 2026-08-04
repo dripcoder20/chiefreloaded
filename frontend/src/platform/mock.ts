@@ -125,6 +125,9 @@ let run: RunSnapshot = {
   attemptBudget: 8,
   startedAt: Date.now() - 252_000,
   provider: "claude",
+  // Resolved from the agent's own output, so the active story shows a real
+  // Agent/Model pair rather than the configured default.
+  model: "claude-opus-4-8",
   pendingGitErrors: 0,
 } as RunSnapshot;
 

@@ -68,6 +68,16 @@ export type {
   UsagePhase,
 } from "./usage";
 
+export {
+  isImplementing,
+  metaValue,
+  metaText,
+  storyMeta,
+  RESOLVING_LABEL,
+  UNAVAILABLE_LABEL,
+} from "./sessionMeta";
+export type { MetaValue, StoryMeta, SessionMetaRun } from "./sessionMeta";
+
 import type {
   UsageReport,
   UsageTotals,
@@ -296,6 +306,9 @@ function apply(ev: LoopEvent): void {
     case EventKind.EvRunStopped:
     case EventKind.EvRunComplete:
     case EventKind.EvRunError:
+    // A run whose state has not changed but whose metadata has — the agent
+    // resolving which model it is running.
+    case EventKind.EvRunUpdated:
       void reloadRuns();
       if (ev.kind === EventKind.EvRunError) app.error = ev.text ?? "the run failed";
       if (ev.kind === EventKind.EvRunComplete) app.activity = "complete";
