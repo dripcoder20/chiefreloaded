@@ -210,31 +210,36 @@
       </div>
 
       <div class="pane">
+        <!-- Kept mounted across tab switches so an active authoring session,
+             its terminal and its unsent input survive leaving the tab. It hides
+             itself when it is not the active view. -->
+        <AuthorPane active={app.view === "author"} />
+
         {#if app.view === "settings"}
           <Settings />
-        {:else if app.view === "author"}
-          <AuthorPane />
-        {:else if !app.project || app.prds.length === 0}
-          <div class="blank">
-            <p>
-              {#if !app.project}
-                No project open.
-              {:else if !app.project.hasChiefDir}
-                <strong>{app.project.name}</strong> has no <code>.chief/</code> directory yet.
-              {:else}
-                <strong>{app.project.name}</strong> has no PRDs yet.
-              {/if}
-            </p>
-            <p class="hint">
-              Loop opens the directory it was launched from.
-            </p>
-            <div class="blank-actions">
-              <button class="primary" onclick={() => (app.view = "author")}>Create a PRD</button>
-              <button onclick={pickProject}>Choose a project…</button>
+        {:else if app.view === "stories"}
+          {#if !app.project || app.prds.length === 0}
+            <div class="blank">
+              <p>
+                {#if !app.project}
+                  No project open.
+                {:else if !app.project.hasChiefDir}
+                  <strong>{app.project.name}</strong> has no <code>.chief/</code> directory yet.
+                {:else}
+                  <strong>{app.project.name}</strong> has no PRDs yet.
+                {/if}
+              </p>
+              <p class="hint">
+                Loop opens the directory it was launched from.
+              </p>
+              <div class="blank-actions">
+                <button class="primary" onclick={() => (app.view = "author")}>Create a PRD</button>
+                <button onclick={pickProject}>Choose a project…</button>
+              </div>
             </div>
-          </div>
-        {:else}
-          <StoryList />
+          {:else}
+            <StoryList />
+          {/if}
         {/if}
       </div>
 

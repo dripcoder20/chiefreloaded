@@ -4,6 +4,7 @@ import {
   EventKind,
   LoopState,
   onEvents,
+  onMenuNewPRD,
   onReady,
   type Settings,
   type LoopEvent,
@@ -210,6 +211,7 @@ let unsubscribe: Array<() => void> = [];
 /** Wire up the event stream and take the first snapshot. */
 export async function connect(): Promise<void> {
   unsubscribe.push(onReady(() => void refresh()));
+  unsubscribe.push(onMenuNewPRD(requestNewPRD));
   unsubscribe.push(
     onEvents((events) => {
       for (const ev of events) apply(ev);
@@ -335,6 +337,57 @@ async function reloadPrds(): Promise<void> {
   } catch {
     // A PRD being rewritten underneath us is normal — the agent edits progress
     // notes constantly. The next event will bring us back into sync.
+  }
+}
+
+/**
+ * Open and focus the New PRD tab. The desktop File ▸ New PRD menu item and its
+ * ⌘N / Ctrl+N shortcut both route here, as does the in-window "New PRD" tab.
+ *
+ * It only reveals the tab — the authoring session is started from inside the
+ * pane, on an explicit action — so handling the same command more than once is
+ * a no-op rather than a second session. It is ignored while a modal question is
+ * awaiting an answer, so the shortcut cannot pull focus off a prompt that is
+ * blocking its run.
+ */
+export function requestNewPRD(): void {
+  if (app.questions.length > 0) return;
+  app.view = "author";
+}
+
+/**
+ * Open a PRD for editing: select it and reveal the authoring tab, from which an
+ * edit session is started. Routed here from the PRD rail's action menus so the
+ * action always targets the row it was opened on, not whatever was last selected.
+ */
+export async function editPrd(name: string): Promise<void> {
+  await selectPrd(name);
+  app.view = "author";
+}
+
+/** Open a PRD's prd.md in the user's default editor. */
+export async function openPrdFile(name: string): Promise<void> {
+  try {
+    await api.prd.openFile(name);
+  } catch (err) {
+    app.error = String(err);
+  }
+}
+
+/**
+ * Delete a PRD and everything under it. Clears the selection when the deleted
+ * PRD was the selected one, so the rail does not point at a row that is gone.
+ */
+export async function deletePrd(name: string): Promise<void> {
+  try {
+    await api.prd.delete(name);
+    if (app.selectedPrd === name) {
+      app.selectedPrd = null;
+      app.detail = null;
+    }
+    await reloadPrds();
+  } catch (err) {
+    app.error = String(err);
   }
 }
 

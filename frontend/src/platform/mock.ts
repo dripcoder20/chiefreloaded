@@ -599,6 +599,11 @@ export function mockOnAuthorExit(_handler: (ev: never) => void): () => void {
   return () => {};
 }
 
+export function mockOnMenuNewPRD(_handler: () => void): () => void {
+  // Browser development has no native menu; the in-window tab is the only path.
+  return () => {};
+}
+
 let mockPrompt = "";
 
 export const mockAuthor = {
@@ -673,6 +678,8 @@ export const mockApi = {
         stories: name === "checkout" ? stories : [],
       }) as PRDDetail,
     progress: async () => ({}) as never,
+    openFile: async (): Promise<void> => {},
+    delete: async (): Promise<void> => {},
   },
   run: {
     start: async (): Promise<string> => {

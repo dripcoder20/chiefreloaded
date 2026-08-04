@@ -95,6 +95,22 @@ func (p *PRDService) Progress(name string) (map[string][]session.ProgressEntry, 
 	return p.s.Progress(name)
 }
 
+// OpenFile opens a PRD's prd.md in the user's default editor.
+func (p *PRDService) OpenFile(name string) error {
+	path, err := p.s.PRDPath(name)
+	if err != nil {
+		return err
+	}
+	app := application.Get()
+	if app == nil {
+		return fmt.Errorf("the application is not running")
+	}
+	return app.Browser.OpenFile(path)
+}
+
+// Delete removes a PRD directory and everything in it.
+func (p *PRDService) Delete(name string) error { return p.s.DeletePRD(name) }
+
 // RunService starts and controls runs.
 type RunService struct{ s *session.Session }
 

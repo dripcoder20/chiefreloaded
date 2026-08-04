@@ -5,6 +5,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { api, onAuthorData, onAuthorExit, type AuthorExit } from "../platform";
   import { app, refresh, selectPrd } from "../stores/app.svelte";
+  import { resolveTerminalKey } from "../lib/terminalInput";
 
   /**
    * The interactive agent session that writes a PRD.
@@ -16,6 +17,16 @@
    * lettered clarifying questions, permission prompts and Ctrl-C all work
    * because nothing is being reinterpreted.
    */
+
+  /**
+   * `active` is true only while the New PRD / Edit PRD tab is the visible one.
+   *
+   * The component stays mounted for the app's whole lifetime so that switching
+   * tabs never tears down the session, its terminal, or this component's state.
+   * When the tab is hidden the pane is `display:none`; going back to visible is
+   * what drives the refit below.
+   */
+  let { active = true }: { active?: boolean } = $props();
 
   let host = $state<HTMLDivElement | null>(null);
   let term: Terminal | null = null;
@@ -75,9 +86,19 @@
     term.loadAddon(fit);
     term.open(host);
 
-    term.onData((data) => {
-      if (!sessionId || sessionId === "pending") return;
-      void api.author.write(sessionId, btoa(data));
+    term.onData((data) => writeToSession(data));
+
+    // Enter and Shift+Enter reach xterm as the same key; left alone it turns
+    // both into a carriage return, so the agent can't tell "submit" from
+    // "insert a line break". Intercept the key ourselves: Shift+Enter emits a
+    // line feed and we suppress xterm's default (return false), while plain
+    // Enter and everything else fall through untouched (return true).
+    term.attachCustomKeyEventHandler((event) => {
+      const action = resolveTerminalKey(event);
+      if (action.kind === "default") return true;
+      event.preventDefault();
+      writeToSession(action.data);
+      return false;
     });
 
     // Sizing is driven by the element, not by one measurement taken at a moment
@@ -88,6 +109,11 @@
     observer = new ResizeObserver(() => refit());
     observer.observe(host);
     refit();
+  }
+
+  function writeToSession(data: string): void {
+    if (!sessionId || sessionId === "pending") return;
+    void api.author.write(sessionId, btoa(data));
   }
 
   function refit(): void {
@@ -104,6 +130,17 @@
       void api.author.resize(sessionId, term.cols, term.rows);
     }
   }
+
+  /**
+   * A hidden element (display:none) has no geometry, so xterm cannot size
+   * itself while the tab is in the background. Refit once it is on screen
+   * again — the ResizeObserver covers the same transition, but doing it here
+   * makes returning to a live session snap back immediately rather than on the
+   * next stray layout tick.
+   */
+  $effect(() => {
+    if (active && sessionId && sessionId !== "pending") void ensureTerminal();
+  });
 
   onMount(() => {
     unsubscribe.push(
@@ -129,8 +166,10 @@
     for (const off of unsubscribe) off();
     unsubscribe = [];
     observer?.disconnect();
-    // Leaving the pane abandons the conversation rather than orphaning an agent
-    // holding a PTY with nothing attached to it.
+    // Only reached when the pane itself is torn down — the app closing, not an
+    // ordinary tab switch, which now leaves this component mounted and hidden.
+    // Releasing the session here is the existing close-session behaviour: don't
+    // orphan an agent holding a PTY with nothing attached to it.
     if (sessionId && sessionId !== "pending" && !result) void api.author.stop(sessionId);
     term?.dispose();
   });
@@ -176,7 +215,7 @@
   }
 </script>
 
-<div class="author">
+<div class="author" class:hidden={!active}>
   {#if !sessionId}
     <div class="setup">
       <h2>Create a PRD</h2>
@@ -255,6 +294,9 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+  }
+  .author.hidden {
+    display: none;
   }
 
   .setup {

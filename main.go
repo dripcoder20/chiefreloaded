@@ -119,6 +119,9 @@ func main() {
 		URL:              "/",
 	})
 
+	// File ▸ New PRD (⌘N / Ctrl+N) asks the webview to open the New PRD tab.
+	app.Menu.Set(applicationMenu(func() { app.Event.Emit(eventMenuNewPRD) }))
+
 	sess.SetAuthoringSinks(
 		func(ev session.AuthorEvent) { app.Event.Emit(eventAuthor, ev) },
 		func(ev session.AuthorExit) { app.Event.Emit(eventAuthorExit, ev) },

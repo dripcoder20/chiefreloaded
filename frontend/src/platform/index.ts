@@ -37,6 +37,7 @@ import {
   mockOnAuthorData,
   mockOnAuthorExit,
   mockOnEvents,
+  mockOnMenuNewPRD,
   mockOnReady,
 } from "./mock";
 
@@ -66,6 +67,7 @@ export const EVENT_BATCH = "loop:events";
 export const EVENT_READY = "loop:ready";
 export const EVENT_AUTHOR = "loop:author";
 export const EVENT_AUTHOR_EXIT = "loop:author:exit";
+export const EVENT_MENU_NEW_PRD = "loop:menu:new-prd";
 
 /**
  * True when running inside a real webview rather than a browser preview.
@@ -119,6 +121,12 @@ export function onAuthorExit(handler: (ev: AuthorExit) => void): () => void {
   return Events.On(EVENT_AUTHOR_EXIT, (e: { data: unknown }) => handler(unwrap(e) as AuthorExit));
 }
 
+/** Fires when the File ▸ New PRD menu item or its ⌘N / Ctrl+N shortcut is used. */
+export function onMenuNewPRD(handler: () => void): () => void {
+  if (!isDesktop) return mockOnMenuNewPRD(handler);
+  return Events.On(EVENT_MENU_NEW_PRD, () => handler());
+}
+
 /**
  * Wails wraps single-argument payloads inconsistently across versions: some
  * deliver the value, some a one-element array. Normalise rather than depend on
@@ -156,6 +164,8 @@ const wailsApi = {
     list: (): Promise<PRDSummary[]> => list(PRDService.List()),
     get: (name: string): Promise<PRDDetail> => PRDService.Get(name),
     progress: (name: string) => PRDService.Progress(name),
+    openFile: (name: string): Promise<void> => PRDService.OpenFile(name),
+    delete: (name: string): Promise<void> => PRDService.Delete(name),
   },
   run: {
     start: (req: StartRequest): Promise<string> => RunService.Start(req),
