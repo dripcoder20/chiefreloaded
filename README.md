@@ -16,7 +16,13 @@ window, adding two things a TUI can't do:
 Loop reads and writes the same `.chief/` directory as the chief TUI, so you can
 switch between the two on the same project.
 
-> **Status: pre-alpha.** Nothing here works yet. See `docs/` for the plan.
+> **Status: alpha.** Running PRDs, per-story stacked draft PRs, the log view and
+> embedded PRD authoring all work; polish and packaging do not. See
+> [docs/parity.md](docs/parity.md) for what is and isn't built, and
+> [docs/design.md](docs/design.md) for why it is shaped this way.
+
+Contributing — including the one rule that will bite you (`internal/chief/` is
+generated) — is in [AGENTS.md](AGENTS.md).
 
 ## Requirements
 

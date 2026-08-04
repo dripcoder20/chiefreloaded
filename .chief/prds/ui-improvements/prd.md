@@ -28,43 +28,46 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 ## 3. User Stories
 
 ### US-001: Preserve PRD authoring sessions across tab changes
-**Status:** todo
+**Status:** done
 **Priority:** 1
 **Description:** As a user, I want an active PRD authoring session to remain alive when I switch tabs so that I can return without losing the conversation or terminal state.
 
 **Acceptance Criteria:**
-- [ ] Switching from a New PRD or Edit PRD tab to any other application tab does not terminate, restart, or replace the authoring agent process.
-- [ ] Returning to the authoring tab shows the same terminal output, scrollback, session status, and unsent input that were present before the tab change.
-- [ ] Output produced while the authoring tab is inactive appears in the same session when the user returns.
-- [ ] A completed, failed, or canceled session retains its final terminal output when the user changes tabs and returns.
-- [ ] Opening or selecting another PRD does not attach its terminal to the preserved session.
-- [ ] Closing the authoring tab uses the application's existing close-session behavior and releases the session resources; ordinary tab switching does not.
-- [ ] Automated tests cover repeated tab switches during active, completed, failed, and canceled sessions.
+- [x] Switching from a New PRD or Edit PRD tab to any other application tab does not terminate, restart, or replace the authoring agent process.
+- [x] Returning to the authoring tab shows the same terminal output, scrollback, session status, and unsent input that were present before the tab change.
+- [x] Output produced while the authoring tab is inactive appears in the same session when the user returns.
+- [x] A completed, failed, or canceled session retains its final terminal output when the user changes tabs and returns.
+- [x] Opening or selecting another PRD does not attach its terminal to the preserved session.
+- [x] Closing the authoring tab uses the application's existing close-session behavior and releases the session resources; ordinary tab switching does not.
+- [x] Automated tests cover repeated tab switches during active, completed, failed, and canceled sessions.
 
 ### US-002: Support multiline terminal input
+**Status:** done
 **Priority:** 2
 **Description:** As a user, I want `Shift+Enter` to add a line break to my terminal prompt so that I can compose structured instructions before submitting them.
 
 **Acceptance Criteria:**
-- [ ] Pressing `Shift+Enter` inserts a newline at the current cursor position and does not submit the input.
-- [ ] Pressing `Enter` without Shift submits the complete input, including any inserted line breaks.
-- [ ] Multiline input remains intact when the user switches tabs and returns.
-- [ ] `Shift+Enter` works in both New PRD and Edit PRD authoring terminals.
-- [ ] Terminal input tests distinguish `Enter`, `Shift+Enter`, and the platform's input-method composition events so composition is not submitted prematurely.
+- [x] Pressing `Shift+Enter` inserts a newline at the current cursor position and does not submit the input.
+- [x] Pressing `Enter` without Shift submits the complete input, including any inserted line breaks.
+- [x] Multiline input remains intact when the user switches tabs and returns.
+- [x] `Shift+Enter` works in both New PRD and Edit PRD authoring terminals.
+- [x] Terminal input tests distinguish `Enter`, `Shift+Enter`, and the platform's input-method composition events so composition is not submitted prematurely.
 
 ### US-003: Add New PRD to the File menu
+**Status:** done
 **Priority:** 3
 **Description:** As a user, I want to create a PRD from the File menu or a keyboard shortcut so that I can begin authoring without navigating through the sidebar.
 
 **Acceptance Criteria:**
-- [ ] The application File menu contains a `New PRD` item.
-- [ ] The menu displays `⌘N` on macOS and the platform-appropriate `Ctrl+N` equivalent on Windows and Linux.
-- [ ] Selecting the menu item or pressing its shortcut opens and focuses a New PRD tab.
-- [ ] The action has the same result as the existing New PRD entry point and does not create a duplicate session when a single command event is handled more than once.
-- [ ] The shortcut is disabled or ignored when an application modal requiring a response is open.
-- [ ] Menu and shortcut behavior is covered by automated tests on supported desktop platforms.
+- [x] The application File menu contains a `New PRD` item.
+- [x] The menu displays `⌘N` on macOS and the platform-appropriate `Ctrl+N` equivalent on Windows and Linux.
+- [x] Selecting the menu item or pressing its shortcut opens and focuses a New PRD tab.
+- [x] The action has the same result as the existing New PRD entry point and does not create a duplicate session when a single command event is handled more than once.
+- [x] The shortcut is disabled or ignored when an application modal requiring a response is open.
+- [x] Menu and shortcut behavior is covered by automated tests on supported desktop platforms.
 
 ### US-004: Add PRD sidebar action menus
+**Status:** in-progress
 **Priority:** 4
 **Description:** As a user, I want a clear PRD sidebar and discoverable actions for each PRD so that I can create or manage PRDs without indirect navigation.
 
@@ -164,22 +167,23 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [ ] The project's formatting, type checking, unit tests, integration tests, and end-to-end tests pass.
 
 ### US-011: Synchronize implementation controls with session state
+**Status:** done
 **Priority:** 1
 **Description:** As a user, I want implementation status and controls to reflect the actual implementation session so that I can safely retry a failed start and pause, resume, or stop any session that is running.
 
 **Acceptance Criteria:**
-- [ ] The UI derives the displayed implementation state and enabled controls from the authoritative implementation-session state rather than from the result of the most recent Start request alone.
-- [ ] While a Start request is unresolved, the UI shows a `Starting` state and prevents additional Start requests for the same PRD.
-- [ ] If a Start request fails and no implementation session exists, the UI shows an actionable error, returns the PRD to a startable state, and keeps Pause and Stop disabled.
-- [ ] After a failed Start request, selecting Start again creates at most one implementation session for that PRD.
-- [ ] When a retry successfully starts implementation, any stale start-error dialog for that PRD is dismissed or replaced by the current running state.
-- [ ] When the authoritative session state is `Running`, Start is disabled and Pause and Stop are enabled, including when the session started after an earlier error.
-- [ ] When the authoritative session state is `Paused`, Resume and Stop are enabled and Start and Pause are disabled.
-- [ ] While a Pause, Resume, or Stop request is unresolved, the UI displays the corresponding transition and prevents duplicate requests for that action.
-- [ ] When stopping completes, the UI shows a non-running terminal state and disables Pause and Stop; the PRD can subsequently be started again according to the existing restart rules.
-- [ ] If a Pause, Resume, or Stop request fails, the UI reconciles with the authoritative session state, displays an actionable error, and enables the controls valid for that reconciled state.
-- [ ] Reopening the PRD or switching away and back reconstructs the same implementation state and valid controls without starting, pausing, resuming, or stopping a session.
-- [ ] Automated tests cover an initial Start failure followed by a successful retry, stale error-dialog cleanup, duplicate Start prevention, control availability for every session state, and failures during Pause, Resume, and Stop.
+- [x] The UI derives the displayed implementation state and enabled controls from the authoritative implementation-session state rather than from the result of the most recent Start request alone.
+- [x] While a Start request is unresolved, the UI shows a `Starting` state and prevents additional Start requests for the same PRD.
+- [x] If a Start request fails and no implementation session exists, the UI shows an actionable error, returns the PRD to a startable state, and keeps Pause and Stop disabled.
+- [x] After a failed Start request, selecting Start again creates at most one implementation session for that PRD.
+- [x] When a retry successfully starts implementation, any stale start-error dialog for that PRD is dismissed or replaced by the current running state.
+- [x] When the authoritative session state is `Running`, Start is disabled and Pause and Stop are enabled, including when the session started after an earlier error.
+- [x] When the authoritative session state is `Paused`, Resume and Stop are enabled and Start and Pause are disabled.
+- [x] While a Pause, Resume, or Stop request is unresolved, the UI displays the corresponding transition and prevents duplicate requests for that action.
+- [x] When stopping completes, the UI shows a non-running terminal state and disables Pause and Stop; the PRD can subsequently be started again according to the existing restart rules.
+- [x] If a Pause, Resume, or Stop request fails, the UI reconciles with the authoritative session state, displays an actionable error, and enables the controls valid for that reconciled state.
+- [x] Reopening the PRD or switching away and back reconstructs the same implementation state and valid controls without starting, pausing, resuming, or stopping a session.
+- [x] Automated tests cover an initial Start failure followed by a successful retry, stale error-dialog cleanup, duplicate Start prevention, control availability for every session state, and failures during Pause, Resume, and Stop.
 
 ### US-012: Open the repository in GitHub or a local editor
 **Priority:** 12

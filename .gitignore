@@ -16,4 +16,13 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 *.out
 coverage.*
 
+# chief runtime artefacts. The PRDs themselves (.chief/prds/*/prd.md) and the
+# accumulated codebase notes (progress.md) are tracked deliberately — they are
+# the project's memory. Everything below is per-machine and large: worktrees
+# carry a full node_modules and a built .app, and the agent transcripts run to
+# several MB apiece.
+.chief/worktrees/
+.chief/**/*.log
+.chief/usage.json
+
 .DS_Store
