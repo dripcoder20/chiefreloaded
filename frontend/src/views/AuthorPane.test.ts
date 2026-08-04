@@ -70,11 +70,16 @@ vi.mock("../platform", () => ({
   },
 }));
 
-vi.mock("../stores/app.svelte", () => ({
-  app: { selectedPrd: null as string | null },
+const store = vi.hoisted(() => ({
+  app: {
+    selectedPrd: null as string | null,
+    authorTarget: { kind: "new" } as { kind: "new" } | { kind: "edit"; prd: string },
+  },
   refresh: vi.fn(),
   selectPrd: vi.fn(),
 }));
+
+vi.mock("../stores/app.svelte", () => store);
 
 const SESSION_ID = "sess-1";
 
@@ -106,6 +111,8 @@ async function endSession(outcome: Record<string, unknown>, prd = "checkout") {
 }
 
 beforeEach(() => {
+  store.app.selectedPrd = null;
+  store.app.authorTarget = { kind: "new" };
   bridge.start.mockReset();
   bridge.stop.mockReset();
   bridge.write.mockReset();
@@ -234,5 +241,72 @@ describe("AuthorPane multiline input", () => {
     expect(bridge.keyHandler!(enter({ isComposing: true }))).toBe(true);
     expect(bridge.keyHandler!(enter({ shiftKey: true, isComposing: true }))).toBe(true);
     expect(bridge.write).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * US-005 — an Edit PRD target starts an editing session for that PRD on its own,
+ * identifies it in the pane, and never starts a second one for the same target.
+ */
+describe("edit sessions", () => {
+  it("starts an edit session for the targeted PRD without further input", async () => {
+    bridge.start.mockResolvedValue(SESSION_ID);
+    store.app.authorTarget = { kind: "edit", prd: "docs-site" };
+
+    render(AuthorPane, { props: { active: true } });
+
+    await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(1));
+    expect(bridge.start.mock.calls[0][0]).toMatchObject({ kind: "edit", prd: "docs-site" });
+  });
+
+  // Two Edit PRD sessions are told apart by the PRD named in the pane; the tab
+  // title says only "Edit PRD".
+  it("names the PRD being edited inside the pane", async () => {
+    bridge.start.mockResolvedValue(SESSION_ID);
+    store.app.authorTarget = { kind: "edit", prd: "docs-site" };
+
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(bridge.start).toHaveBeenCalled());
+    await waitFor(() => expect(view.getByText(/Editing docs-site/)).toBeTruthy());
+  });
+
+  it("does not offer the create form while editing", async () => {
+    bridge.start.mockResolvedValue(SESSION_ID);
+    store.app.authorTarget = { kind: "edit", prd: "docs-site" };
+
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(bridge.start).toHaveBeenCalled());
+    expect(view.queryByRole("button", { name: "Create" })).toBeNull();
+  });
+
+  // Returning to the tab must not start a second agent for the same PRD.
+  it("starts at most one session per target across tab switches", async () => {
+    bridge.start.mockResolvedValue(SESSION_ID);
+    store.app.authorTarget = { kind: "edit", prd: "docs-site" };
+
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(1));
+
+    await switchTabs(view.rerender, 3);
+    expect(bridge.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains a failed start and offers a retry", async () => {
+    bridge.start.mockRejectedValue(new Error("docs-site has no PRD to edit"));
+    store.app.authorTarget = { kind: "edit", prd: "docs-site" };
+
+    const view = render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(view.getByText(/has no PRD to edit/)).toBeTruthy());
+
+    bridge.start.mockResolvedValue(SESSION_ID);
+    await fireEvent.click(view.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(2));
+  });
+
+  it("starts nothing on its own when the target is a new PRD", async () => {
+    store.app.authorTarget = { kind: "new" };
+    render(AuthorPane, { props: { active: true } });
+    await waitFor(() => {});
+    expect(bridge.start).not.toHaveBeenCalled();
   });
 });

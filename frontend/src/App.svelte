@@ -44,6 +44,10 @@
           ? "Resume"
           : "Start",
   );
+  // A conversational editing session is never labelled "New PRD" — the tab title
+  // follows what the pane is actually for.
+  const authorTabLabel = $derived(app.authorTarget.kind === "edit" ? "Edit PRD" : "New PRD");
+
   const pauseLabel = $derived(transitioning === "pausing" ? "Pausing…" : "Pause");
   const stopLabel = $derived(transitioning === "stopping" ? "Stopping…" : "Stop");
 
@@ -217,7 +221,7 @@
           role="tab"
           aria-selected={app.view === "author"}
           class:on={app.view === "author"}
-          onclick={() => (app.view = "author")}>New PRD</button
+          onclick={() => (app.view = "author")}>{authorTabLabel}</button
         >
         <button
           role="tab"

@@ -98,6 +98,16 @@ class AppState {
    */
   usage = $state<UsageReport | null>(null);
 
+  /**
+   * What the authoring tab is for: writing a new PRD, or revising a named one.
+   *
+   * It is what the tab is titled from, so an editing session is never labelled
+   * `New PRD`, and what tells the pane which PRD to start an edit session
+   * against — independent of `selectedPrd`, which the rail changes for reasons
+   * that have nothing to do with the open session.
+   */
+  authorTarget = $state<{ kind: "new" } | { kind: "edit"; prd: string }>({ kind: "new" });
+
   /** The PRD a delete confirmation is currently asking about, if any. */
   pendingDelete = $state<string | null>(null);
 
@@ -362,16 +372,27 @@ async function reloadPrds(): Promise<void> {
  */
 export function requestNewPRD(): void {
   if (app.questions.length > 0) return;
+  app.authorTarget = { kind: "new" };
   app.view = "author";
 }
 
 /**
- * Open a PRD for editing: select it and reveal the authoring tab, from which an
- * edit session is started. Routed here from the PRD rail's action menus so the
- * action always targets the row it was opened on, not whatever was last selected.
+ * Open a PRD for conversational editing.
+ *
+ * The PRD is read first: a missing or unreadable one must produce an actionable
+ * error rather than opening an authoring tab that would go on to create an empty
+ * replacement. Routed here from the rail's action menus, so the target is always
+ * the row the menu was opened on, not whatever happens to be selected.
  */
 export async function editPrd(name: string): Promise<void> {
+  try {
+    await api.prd.get(name);
+  } catch (err) {
+    app.error = `${name} cannot be opened for editing: ${err}`;
+    return;
+  }
   await selectPrd(name);
+  app.authorTarget = { kind: "edit", prd: name };
   app.view = "author";
 }
 

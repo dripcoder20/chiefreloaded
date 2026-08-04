@@ -44,6 +44,28 @@
   const nameValid = $derived(/^[A-Za-z0-9_-]+$/.test(name));
   const running = $derived(sessionId !== null && sessionId !== "pending" && result === null);
 
+  /**
+   * The PRD this pane is editing, or null when it is creating one.
+   *
+   * Read from the store's authorTarget rather than selectedPrd: selecting a
+   * different PRD in the rail must not silently re-point a live editing session
+   * at another document.
+   */
+  const editing = $derived(app.authorTarget.kind === "edit" ? app.authorTarget.prd : null);
+
+  /**
+   * Choosing Edit PRD in the rail is the decision — the pane does not ask again.
+   * The guard is on the target, so returning to the tab or re-selecting the same
+   * PRD cannot start a second session for it.
+   */
+  let startedFor = $state<string | null>(null);
+  $effect(() => {
+    const target = editing;
+    if (!target || startedFor === target || sessionId) return;
+    startedFor = target;
+    void start("edit", target);
+  });
+
   function makeTerminal(): Terminal {
     const css = getComputedStyle(document.documentElement);
     const v = (n: string, fallback: string) => css.getPropertyValue(n).trim() || fallback;
@@ -174,7 +196,7 @@
     term?.dispose();
   });
 
-  async function start(kind: "new" | "edit"): Promise<void> {
+  async function start(kind: "new" | "edit", prd?: string): Promise<void> {
     error = null;
     result = null;
     starting = true;
@@ -187,7 +209,7 @@
 
       const id = await api.author.start({
         kind,
-        prd: kind === "edit" ? (app.selectedPrd ?? "") : name,
+        prd: kind === "edit" ? (prd ?? editing ?? "") : name,
         context,
         cols: term?.cols ?? 120,
         rows: term?.rows ?? 32,
@@ -216,7 +238,23 @@
 </script>
 
 <div class="author" class:hidden={!active}>
-  {#if !sessionId}
+  {#if !sessionId && editing}
+    <!-- The edit session starts on its own; this is only reached when starting
+         it failed, so it explains what went wrong and offers a retry. -->
+    <div class="setup">
+      <h2>Edit {editing}</h2>
+      {#if error}
+        <p class="err">{error}</p>
+        <div class="actions">
+          <button class="primary" disabled={starting} onclick={() => start("edit", editing)}>
+            {starting ? "Starting…" : "Try again"}
+          </button>
+        </div>
+      {:else}
+        <p class="hint">Starting the editing session…</p>
+      {/if}
+    </div>
+  {:else if !sessionId}
     <div class="setup">
       <h2>Create a PRD</h2>
       <p class="hint">
@@ -279,7 +317,9 @@
     {:else if running}
       <div class="running-bar">
         <span class="dot"></span>
-        <span>Session live — type in the terminal.</span>
+        <!-- Naming the PRD here is what distinguishes two editing sessions from
+             one another; the tab title alone says only "Edit PRD". -->
+        <span>{editing ? `Editing ${editing}` : "Session live"} — type in the terminal.</span>
         <button onclick={stop}>Stop</button>
       </div>
     {/if}

@@ -85,17 +85,18 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Automated tests verify sidebar ordering, divider presence, hover and focus visibility, touch visibility, target selection, action parity between both menus, dismissal, and keyboard access.
 
 ### US-005: Edit a PRD through an authoring session
+**Status:** done
 **Priority:** 5
 **Description:** As a user, I want Edit PRD to open a conversational editing session so that I can revise an existing PRD with an agent.
 
 **Acceptance Criteria:**
-- [ ] Selecting `Edit PRD` opens a dedicated authoring tab for the targeted PRD and starts or restores an editing session with the current PRD content available as context.
-- [ ] The editing tab is titled `Edit PRD` and is never titled `New PRD`.
-- [ ] The tab also identifies the targeted PRD within the tab content so two Edit PRD sessions can be distinguished.
-- [ ] The editing session uses the selected authoring agent for that session, defaulting to the configured authoring agent when no session-specific choice exists.
-- [ ] Changes are written only after the conversational workflow reaches its existing explicit save/confirmation point; merely opening Edit PRD does not modify the file.
-- [ ] Switching tabs preserves the editing session according to US-001.
-- [ ] If the PRD file is missing or unreadable, the application displays an actionable error and does not start an empty replacement PRD.
+- [x] Selecting `Edit PRD` opens a dedicated authoring tab for the targeted PRD and starts or restores an editing session with the current PRD content available as context.
+- [x] The editing tab is titled `Edit PRD` and is never titled `New PRD`.
+- [x] The tab also identifies the targeted PRD within the tab content so two Edit PRD sessions can be distinguished.
+- [x] The editing session uses the selected authoring agent for that session, defaulting to the configured authoring agent when no session-specific choice exists.
+- [x] Changes are written only after the conversational workflow reaches its existing explicit save/confirmation point; merely opening Edit PRD does not modify the file.
+- [x] Switching tabs preserves the editing session according to US-001.
+- [x] If the PRD file is missing or unreadable, the application displays an actionable error and does not start an empty replacement PRD.
 
 ### US-006: Delete or open a PRD markdown file from its action menu
 **Status:** done
