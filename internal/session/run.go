@@ -402,10 +402,17 @@ func (r *run) markDone(ctx context.Context, storyID, storyTitle string, check Co
 // — the goroutine scanning the agent's stdout — will block.
 func (r *run) forwardAgentEvents(l *chiefloop.Loop, storyID string, attempt int) {
 	for ev := range l.Events() {
+		// Usage can ride along on a content event (Claude assistant text + usage)
+		// or arrive as a usage-only event, so attribute it whenever it is present
+		// regardless of the event kind, and only once per payload.
+		if ev.Usage != nil {
+			r.recordUsage(storyID, attempt, ev.Usage)
+		}
+
 		kind, ok := agentEventKind(ev.Type)
 		if !ok {
-			// Story-done, completion and max-iteration events drive the state
-			// machine instead, and are re-emitted with better payloads.
+			// Story-done, completion, usage and max-iteration events drive the state
+			// machine or the usage ledger instead, not the agent-output stream.
 			continue
 		}
 		out := Event{
@@ -420,6 +427,40 @@ func (r *run) forwardAgentEvents(l *chiefloop.Loop, storyID string, attempt int)
 		}
 		r.sess.publish(out)
 	}
+}
+
+// recordUsage attributes one usage payload to this attempt, story, run and
+// project, then publishes the record with the absolute cumulative roll-up.
+//
+// A duplicate submission (same key) is dropped by the ledger and does not
+// re-publish, so replaying the source event cannot inflate a total.
+func (r *run) recordUsage(storyID string, attempt int, u *chiefloop.Usage) {
+	attr := usageAttribution{
+		runID:    r.id,
+		prd:      r.prdName,
+		storyID:  storyID,
+		attempt:  attempt,
+		provider: r.providerName(),
+		at:       r.sess.now().UnixMilli(),
+	}
+	key := r.sess.usage.nextKey(attemptScopeKey(r.id, storyID, attempt))
+	rec := buildUsageRecord(key, attr, u)
+	if !r.sess.usage.add(rec) {
+		return
+	}
+	r.sess.publish(Event{
+		Kind: EvUsage, RunID: r.id, PRD: r.prdName,
+		StoryID: storyID, Attempt: attempt,
+		Usage: ptr(rec), UsageReport: ptr(r.sess.usageReport()),
+	})
+}
+
+// providerName reports the resolved agent CLI name, or "" before one is set.
+func (r *run) providerName() string {
+	if r.provider == nil {
+		return ""
+	}
+	return r.provider.Name()
 }
 
 // awaitResume blocks while paused. Returns true when the run should end.
@@ -452,7 +493,12 @@ func (r *run) finish(state LoopState, kind EventKind, text string, e *ErrorInfo)
 	r.finished = r.sess.now()
 	r.err = e
 	r.storyID = ""
+	finishedAt := r.finished.UnixMilli()
 	r.mu.Unlock()
+
+	// Record how the run ended so history browsing shows completed/stopped/failed
+	// across a restart. Non-terminal transitions (a pause) are ignored inside.
+	r.sess.usage.noteRunTerminal(r.id, sessionStateFromLoop(state), finishedAt)
 
 	// chief leaves a story wedged as in-progress when a run ends any way other
 	// than cleanly, and never clears it on startup either — so a crash strands
@@ -465,6 +511,22 @@ func (r *run) finish(state LoopState, kind EventKind, text string, e *ErrorInfo)
 	r.sess.mu.Unlock()
 
 	r.sess.publish(Event{Kind: kind, RunID: r.id, PRD: r.prdName, Text: text, Run: &snap, Error: e})
+}
+
+// sessionStateFromLoop maps a run's terminal LoopState onto the session history
+// vocabulary. A non-terminal state (running, paused) maps to the empty string,
+// which noteRunTerminal ignores.
+func sessionStateFromLoop(state LoopState) string {
+	switch state {
+	case StateComplete:
+		return sessionCompleted
+	case StateStopped:
+		return sessionStopped
+	case StateError:
+		return sessionFailed
+	default:
+		return ""
+	}
 }
 
 // clearInProgress resets any story left mid-flight back to todo.

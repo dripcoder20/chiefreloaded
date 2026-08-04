@@ -18,6 +18,7 @@
   import LogPanel from "./views/LogPanel.svelte";
   import Settings from "./views/Settings.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
+  import UsageBar from "./views/UsageBar.svelte";
 
   onMount(() => {
     void connect();
@@ -248,6 +249,7 @@
   <footer class="statusbar">
     <span class="activity">{app.activity}</span>
     <span class="spacer"></span>
+    <UsageBar run={run} session={app.currentUsage.session} story={app.currentUsage.story} />
     {#if app.runningCount > 0}
       <span class="tnum">{app.runningCount} running</span>
     {/if}

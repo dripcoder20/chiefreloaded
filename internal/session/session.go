@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +91,10 @@ type Session struct {
 	authoring   *authoring.Manager
 	authorSpecs map[string]authoring.Spec
 
+	// usage accumulates attributed usage across every run in the open project,
+	// deduplicating on submission so replays cannot inflate a total.
+	usage *usageLedger
+
 	closeOnce sync.Once
 }
 
@@ -115,6 +121,7 @@ func New(opts Options) (*Session, error) {
 		pending:     make(map[QuestionID]chan Answer),
 		authoring:   authoring.NewManager(),
 		authorSpecs: make(map[string]authoring.Spec),
+		usage:       newUsageLedger(),
 	}, nil
 }
 
@@ -183,6 +190,7 @@ func (s *Session) Snapshot() Snapshot {
 		Environment: s.env,
 		Runs:        make([]RunSnapshot, 0, len(s.runs)),
 		Questions:   make([]Question, 0, len(s.questions)),
+		Usage:       s.usageReportLocked(),
 	}
 	for _, r := range s.runsLocked() {
 		snap.Runs = append(snap.Runs, r)
@@ -214,24 +222,75 @@ func (s *Session) OpenProject(ctx context.Context, root string) (Project, error)
 	env := s.opts.Probe(ctx)
 	prds := discoverPRDs(project.Root)
 
+	// Load this project's persisted usage before taking the lock. A missing file
+	// is an empty history; an unreadable one is surfaced below but must not block
+	// opening the project — the PRD list and run controls stay usable regardless.
+	store := newUsageStore(project.Root)
+	records, runStates, usageErr := store.load()
+
 	s.mu.Lock()
 	s.project = &project
 	s.cfg = cfg
 	s.loopCfg = loopCfg
 	s.env = env
 	s.prds = prds
-	// Runs and questions belong to the previous project.
+	// Runs, questions and usage totals belong to the previous project.
 	s.runs = make(map[string]*RunSnapshot)
 	s.live = make(map[string]*run)
 	s.questions = make(map[QuestionID]Question)
 	s.pending = make(map[QuestionID]chan Answer)
+	s.usage.open(store, records, runStates, s.log)
+	// Advance the run counter past any persisted run so a new run cannot reuse a
+	// historical run's ID and merge its usage into that run's totals.
+	s.bumpRunSeqLocked(records)
 	s.mu.Unlock()
 
 	s.bus.publish(Event{
 		Kind: EvProjectOpened,
 		Text: project.Root,
 	})
+	if usageErr != nil {
+		s.publishUsageError(usageErr)
+	}
 	return project, nil
+}
+
+// publishUsageError surfaces a history that could not be loaded. The totals start
+// empty until a new run writes valid data; the run controls and PRD list are
+// unaffected, so the error is actionable rather than fatal.
+func (s *Session) publishUsageError(err error) {
+	s.publish(Event{
+		Kind: EvUsageError,
+		Text: err.Error(),
+		Error: &ErrorInfo{
+			Message: err.Error(),
+			Hint:    "Usage history could not be loaded and starts empty. Repair or remove .chief/" + usageFile + " to restore it.",
+		},
+	})
+}
+
+// bumpRunSeqLocked raises the run counter to sit above the highest persisted run
+// number, so nextRunID never re-issues an ID that a historical run already used.
+// Callers hold s.mu.
+func (s *Session) bumpRunSeqLocked(records []UsageRecord) {
+	for _, rec := range records {
+		if n := runSeqFromID(rec.RunID); n > s.runSeq {
+			s.runSeq = n
+		}
+	}
+}
+
+// runSeqFromID extracts the numeric sequence from a "run_<n>" ID, or 0.
+func runSeqFromID(runID string) int {
+	const prefix = "run_"
+	if !strings.HasPrefix(runID, prefix) {
+		return 0
+	}
+	n, err := strconv.Atoi(runID[len(prefix):])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Project returns the currently open project, or nil.
@@ -334,6 +393,9 @@ func (s *Session) SaveLoopConfig(cfg config.LoopConfig) error {
 		return err
 	}
 	cfg.Normalise()
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid settings: %w", err)
+	}
 	if err := config.SaveLoop(root, &cfg); err != nil {
 		return fmt.Errorf("save .chief/config.yaml: %w", err)
 	}
@@ -379,6 +441,55 @@ func (s *Session) SaveConfig(cfg config.Config) error {
 
 	s.bus.publish(Event{Kind: EvConfigChanged})
 	return nil
+}
+
+// Usage returns the absolute cumulative usage roll-up for the open project,
+// attributed by attempt, story and run.
+func (s *Session) Usage() UsageReport {
+	return s.usageReport()
+}
+
+// usageReport returns the roll-up with each session's lifecycle state resolved.
+// Sessions with a recorded terminal outcome keep it; the rest are reconciled
+// against the live runs — a run that is currently executing is active, one with
+// usage but no live run and no recorded outcome was interrupted.
+func (s *Session) usageReport() UsageReport {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.usageReportLocked()
+}
+
+// usageReportLocked is usageReport for callers already holding s.mu.
+func (s *Session) usageReportLocked() UsageReport {
+	rep := s.usage.report()
+	for i := range rep.Sessions {
+		ses := &rep.Sessions[i]
+		if ses.State != "" {
+			continue
+		}
+		if s.isRunActiveLocked(ses.RunID) {
+			ses.State = sessionActive
+			continue
+		}
+		ses.State = sessionInterrupted
+	}
+	return rep
+}
+
+// isRunActiveLocked reports whether a run is currently executing in this session,
+// reading through to the live run so a paused or resuming run still counts as
+// active. Callers hold s.mu.
+func (s *Session) isRunActiveLocked(runID string) bool {
+	live, ok := s.live[runID]
+	if !ok {
+		return false
+	}
+	switch live.snapshot().State {
+	case StateRunning, StatePaused, StateAwaiting, StateIdle:
+		return true
+	default:
+		return false
+	}
 }
 
 // Runs returns a snapshot of every run in this session.

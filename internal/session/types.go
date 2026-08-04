@@ -139,6 +139,9 @@ type Snapshot struct {
 	Runs        []RunSnapshot `json:"runs"`
 	Questions   []Question    `json:"questions"`
 	Environment Environment   `json:"environment"`
+	// Usage is the absolute cumulative usage roll-up, so a reconnecting consumer
+	// adopts the totals wholesale rather than replaying deltas.
+	Usage UsageReport `json:"usage"`
 }
 
 // ---------------------------------------------------------------- questions --

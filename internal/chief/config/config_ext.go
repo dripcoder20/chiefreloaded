@@ -1,5 +1,7 @@
 package config
 
+import "fmt"
+
 // This file is Loop's, not chief's. It lives in the vendored package so Loop's
 // settings ride in the same .chief/config.yaml the chief TUI reads.
 //
@@ -57,6 +59,28 @@ type GitConfig struct {
 	VerifyCommit bool `yaml:"verifyCommit"`
 }
 
+// UsageConfig holds the thresholds Loop uses to warn about an agent approaching a
+// context-window limit or exceeding an expected per-session cost. The warnings are
+// purely informational — they never pause or stop a run — so these values only
+// change what the UI highlights, never how a run behaves.
+type UsageConfig struct {
+	// ContextWarnPercent is the context-window utilization (0–100) at which the UI
+	// shows a warning. ContextCriticalPercent is the higher point at which it shows
+	// a critical state. Critical must be strictly greater than warning.
+	ContextWarnPercent     float64 `yaml:"contextWarnPercent"`
+	ContextCriticalPercent float64 `yaml:"contextCriticalPercent"`
+	// CostWarnAmount is an optional per-session cost (in the run's reported
+	// currency) above which the UI warns. Nil means no cost warning is configured.
+	CostWarnAmount *float64 `yaml:"costWarnAmount,omitempty"`
+}
+
+// Default context-warning thresholds. 80% gives room to react before a limit and
+// 95% flags that a limit is imminent.
+const (
+	DefaultContextWarnPercent     = 80
+	DefaultContextCriticalPercent = 95
+)
+
 // DefaultBranchTemplate keeps every Loop branch under one prefix, namespaced by
 // PRD so two PRDs cannot collide, and ending in a slug so `git branch` is
 // readable.
@@ -69,7 +93,8 @@ const DefaultBranchTemplate = "loop/{prd}/{story}-{slug}"
 // something chief no longer understands.
 type LoopConfig struct {
 	Config `yaml:",inline"`
-	Git    GitConfig `yaml:"git"`
+	Git    GitConfig   `yaml:"git"`
+	Usage  UsageConfig `yaml:"usage"`
 }
 
 // DefaultLoop returns the default Loop configuration.
@@ -87,6 +112,10 @@ func DefaultLoop() *LoopConfig {
 			Draft:           true,
 			RequireWorktree: true,
 			VerifyCommit:    true,
+		},
+		Usage: UsageConfig{
+			ContextWarnPercent:     DefaultContextWarnPercent,
+			ContextCriticalPercent: DefaultContextCriticalPercent,
 		},
 	}
 }
@@ -112,6 +141,9 @@ func LoadLoop(baseDir string) (*LoopConfig, error) {
 	}
 	if raw != nil && raw.Git != nil {
 		cfg.Git = *raw.Git
+	}
+	if raw != nil && raw.Usage != nil {
+		cfg.Usage = *raw.Usage
 	}
 	cfg.Normalise()
 	return cfg, nil
@@ -140,6 +172,42 @@ func (c *LoopConfig) Normalise() {
 	if c.Git.BranchTemplate == "" {
 		c.Git.BranchTemplate = DefaultBranchTemplate
 	}
+	// A zero percentage is an unset field (a legacy config, or a partially written
+	// usage block), not a deliberate 0 — 0% would warn from the first token. Fill
+	// it with the default rather than reject it, reserving validation for values
+	// the user actually chose.
+	if c.Usage.ContextWarnPercent == 0 {
+		c.Usage.ContextWarnPercent = DefaultContextWarnPercent
+	}
+	if c.Usage.ContextCriticalPercent == 0 {
+		c.Usage.ContextCriticalPercent = DefaultContextCriticalPercent
+	}
+}
+
+// Validate reports the first invalid setting, so a bad value from the UI is
+// refused rather than silently clamped into something the user did not ask for.
+// Call it after Normalise, which has already filled unset fields with defaults.
+func (c *LoopConfig) Validate() error {
+	return c.Usage.validate()
+}
+
+// validate enforces the usage-warning invariants: both percentages sit within
+// (0, 100], the critical threshold is strictly above the warning one, and the
+// optional cost warning is non-negative.
+func (u UsageConfig) validate() error {
+	if u.ContextWarnPercent <= 0 || u.ContextWarnPercent >= 100 {
+		return fmt.Errorf("context warning percent must be between 0 and 100, got %g", u.ContextWarnPercent)
+	}
+	if u.ContextCriticalPercent <= 0 || u.ContextCriticalPercent > 100 {
+		return fmt.Errorf("context critical percent must be between 0 and 100, got %g", u.ContextCriticalPercent)
+	}
+	if u.ContextCriticalPercent <= u.ContextWarnPercent {
+		return fmt.Errorf("context critical percent (%g) must be greater than warning percent (%g)", u.ContextCriticalPercent, u.ContextWarnPercent)
+	}
+	if u.CostWarnAmount != nil && *u.CostWarnAmount < 0 {
+		return fmt.Errorf("cost warning amount cannot be negative, got %g", *u.CostWarnAmount)
+	}
+	return nil
 }
 
 // PerStory reports whether per-story stacked branches are enabled.

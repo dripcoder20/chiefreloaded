@@ -37,6 +37,43 @@ export type View = "stories" | "author" | "settings";
  */
 export type Transition = "starting" | "pausing" | "resuming" | "stopping";
 
+/**
+ * Usage read model and its pure presentation logic now live in ./usage, which
+ * imports nothing from ../platform so it is unit-testable without the generated
+ * Wails bindings. Re-exported here so components keep importing from one place.
+ */
+export {
+  DEFAULT_THRESHOLDS,
+  contextUtilization,
+  contextLevel,
+  worstContext,
+  costLevel,
+  usagePhase,
+  hasCost,
+  isMixedProvider,
+  isPartial,
+  historyIsEmpty,
+  usageErrorMessage,
+} from "./usage";
+export type {
+  UsageGroup,
+  UsageTotals,
+  StoryUsage,
+  SessionUsage,
+  UsageReport,
+  UsageThresholds,
+  WarnLevel,
+  UsagePhase,
+} from "./usage";
+
+import type {
+  UsageReport,
+  UsageTotals,
+  SessionUsage,
+  UsageThresholds,
+} from "./usage";
+import { DEFAULT_THRESHOLDS, usageErrorMessage } from "./usage";
+
 class AppState {
   project = $state<Project | null>(null);
   prds = $state<PRDSummary[]>([]);
@@ -51,6 +88,13 @@ class AppState {
   selectedStory = $state<string | null>(null);
   view = $state<View>("stories");
   detail = $state<PRDDetail | null>(null);
+
+  /**
+   * Absolute cumulative usage roll-up, adopted wholesale from the snapshot and
+   * replaced by each EvUsage event's report. Never a delta, so a replayed or
+   * reconnected event is idempotent.
+   */
+  usage = $state<UsageReport | null>(null);
 
   /** Most recent agent output, for the status bar ticker. */
   activity = $state("");
@@ -112,6 +156,51 @@ class AppState {
   get runningCount(): number {
     return this.runs.filter((r) => r.state === "running").length;
   }
+
+  /**
+   * The session (per-run) and current-story usage slices for the selected PRD's
+   * run. Keyed exactly as the Go ledger keys them: run id, and run id + "/" +
+   * story id. Undefined slices mean no usage has been attributed there yet.
+   */
+  get currentUsage(): { session?: UsageTotals; story?: UsageTotals } {
+    const run = this.currentRun;
+    if (!run || !this.usage) return {};
+    const story = run.storyId ? this.usage.stories[`${run.id}/${run.storyId}`] : undefined;
+    return { session: this.usage.runs[run.id], story };
+  }
+
+  /** The project (General) usage grand total across every run. */
+  get generalUsage(): UsageTotals | undefined {
+    return this.usage?.project;
+  }
+
+  /** The retained-session history, newest first, for the General scope. */
+  get generalSessions(): SessionUsage[] {
+    return this.usage?.sessions ?? [];
+  }
+
+  /**
+   * The configured usage-warning thresholds, falling back to the defaults when a
+   * project (or its usage block) is not loaded. Reads $state so it stays reactive
+   * when settings change.
+   */
+  get thresholds(): UsageThresholds {
+    const u = (this.config as { usage?: Partial<UsageThresholds> } | null)?.usage;
+    return {
+      contextWarnPercent: u?.contextWarnPercent || DEFAULT_THRESHOLDS.contextWarnPercent,
+      contextCriticalPercent:
+        u?.contextCriticalPercent || DEFAULT_THRESHOLDS.contextCriticalPercent,
+      costWarnAmount: u?.costWarnAmount ?? undefined,
+    };
+  }
+
+  /** The human title of the run's current story, for naming a scope. */
+  get currentStoryTitle(): string | null {
+    const run = this.currentRun;
+    if (!run?.storyId) return null;
+    const story = this.detail?.stories?.find((s) => s.id === run.storyId);
+    return story?.title ?? null;
+  }
 }
 
 export const app = new AppState();
@@ -147,6 +236,7 @@ export async function refresh(): Promise<void> {
     app.prds = snap.prds ?? [];
     app.runs = snap.runs ?? [];
     app.questions = snap.questions ?? [];
+    app.usage = (snap as { usage?: UsageReport }).usage ?? null;
 
     if (!app.selectedPrd && app.prds.length > 0) {
       await selectPrd(app.prds[0].name);
@@ -210,6 +300,20 @@ function apply(ev: LoopEvent): void {
     case EventKind.EvQuestionAsked:
     case EventKind.EvQuestionResolved:
       void api.run.questions().then((q) => (app.questions = q));
+      break;
+
+    case EventKind.EvUsage: {
+      // The report is an absolute roll-up, so adopt it wholesale; replay and
+      // reconnect both re-adopt the same numbers rather than adding.
+      const report = (ev as { usageReport?: UsageReport }).usageReport;
+      if (report) app.usage = report;
+      break;
+    }
+
+    case EventKind.EvUsageError:
+      // Persisted history failed to load. Surface it — live usage is
+      // unaffected — rather than leaving the failure silent.
+      app.error = usageErrorMessage(ev.text);
       break;
   }
 }

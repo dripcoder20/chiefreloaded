@@ -45,6 +45,7 @@ Commands:
   list              List the PRDs in a project
   show <prd>        Show a PRD's stories
   run <prd>         Run a PRD to completion, streaming progress
+  usage             Show the cumulative usage roll-up (project/session/story)
   watch             Stream the session event log until interrupted
 
 Flags:
@@ -95,7 +96,7 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
-	case "doctor", "list", "show", "run", "watch":
+	case "doctor", "list", "show", "run", "usage", "watch":
 	default:
 		return fmt.Errorf("unknown command %q (try `loopctl help`)", cmd)
 	}
@@ -134,6 +135,8 @@ func run(args []string) error {
 			return fmt.Errorf("run needs a PRD name")
 		}
 		return runPRD(ctx, s, cmdArgs[0])
+	case "usage":
+		return showUsage(s, *asJSON)
 	case "watch":
 		return watch(ctx, s)
 	}
@@ -337,6 +340,37 @@ func show(s *session.Session, name string, asJSON bool) error {
 		}
 	}
 	return nil
+}
+
+// showUsage prints the cumulative usage roll-up. The JSON form is the whole
+// read model the GUI status bar and usage panel render from — project (General),
+// per-run (Session) and per-story (Story) scopes — so the end-to-end tests can
+// assert live totals and, after a restart, that persisted history reloads.
+func showUsage(s *session.Session, asJSON bool) error {
+	report := s.Usage()
+	if asJSON {
+		return emitJSON(report)
+	}
+
+	w := table()
+	fmt.Fprintln(w, "SCOPE\tINPUT\tOUTPUT\tCACHE-R\tCACHE-W\tTOTAL\tCOST")
+	printUsageRow(w, "general", report.Project)
+	for runID, totals := range report.Runs {
+		printUsageRow(w, "session "+runID, totals)
+	}
+	for storyKey, totals := range report.Stories {
+		printUsageRow(w, "story "+storyKey, totals)
+	}
+	return w.Flush()
+}
+
+func printUsageRow(w *tabwriter.Writer, scope string, t session.UsageTotals) {
+	cost := "—"
+	if t.Currency != "" {
+		cost = fmt.Sprintf("%.4f %s", t.Cost, t.Currency)
+	}
+	fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%s\n",
+		scope, t.InputTokens, t.OutputTokens, t.CacheReadTokens, t.CacheWriteTokens, t.TotalTokens, cost)
 }
 
 func watch(ctx context.Context, s *session.Session) error {

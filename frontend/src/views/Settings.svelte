@@ -37,6 +37,14 @@
       saving = false;
     }
   }
+
+  // An empty cost field means "no warning" (nil on the Go side); any number is
+  // taken verbatim so the config layer can validate it and reject a bad value.
+  function costFromInput(raw: string): number | undefined {
+    const trimmed = raw.trim();
+    if (trimmed === "") return undefined;
+    return Number(trimmed);
+  }
 </script>
 
 <div class="settings">
@@ -136,6 +144,56 @@
       <p class="warn">
         Agents run with permission checks disabled. Anything Loop drives can run commands
         and edit files in the project directory without asking.
+      </p>
+    </section>
+
+    <section>
+      <h3>Usage warnings</h3>
+      <p class="lead">
+        Highlight an agent approaching a context limit or exceeding an expected cost. A
+        warning is informational only — it never pauses or stops a run.
+      </p>
+
+      <label class="row">
+        <span class="label">Context warning %</span>
+        <input
+          type="number"
+          min="1"
+          max="99"
+          value={cfg.usage?.contextWarnPercent ?? 80}
+          onchange={(e) =>
+            update((c) => (c.usage.contextWarnPercent = Number(e.currentTarget.value)))}
+        />
+      </label>
+
+      <label class="row">
+        <span class="label">Context critical %</span>
+        <input
+          type="number"
+          min="1"
+          max="100"
+          value={cfg.usage?.contextCriticalPercent ?? 95}
+          onchange={(e) =>
+            update((c) => (c.usage.contextCriticalPercent = Number(e.currentTarget.value)))}
+        />
+      </label>
+
+      <label class="row">
+        <span class="label">Session cost warning</span>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="no warning"
+          value={cfg.usage?.costWarnAmount ?? ""}
+          onchange={(e) =>
+            update((c) => (c.usage.costWarnAmount = costFromInput(e.currentTarget.value)))}
+        />
+      </label>
+
+      <p class="note">
+        The critical percent must be greater than the warning percent. Invalid values are
+        rejected and not saved.
       </p>
     </section>
 
@@ -250,7 +308,8 @@
   }
 
   select,
-  input[type="text"] {
+  input[type="text"],
+  input[type="number"] {
     flex: 1;
     padding: 4px 8px;
     background: var(--bg-raised);
@@ -260,7 +319,8 @@
     font: inherit;
   }
 
-  input[type="text"] {
+  input[type="text"],
+  input[type="number"] {
     font-family: var(--font-mono);
     font-size: 12px;
   }

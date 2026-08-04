@@ -133,10 +133,15 @@ func runCtl(t *testing.T, root string, args ...string) (string, error) {
 	t.Helper()
 
 	cmd := exec.Command(loopctl, append([]string{"-C", root}, args...)...)
-	cmd.Env = append(os.Environ(),
-		"CHIEF_AGENT=claude",
-		"CHIEF_AGENT_PATH="+fakeAgent(t, t.TempDir()),
-	)
+	cmd.Env = os.Environ()
+	// Let a test pin its own scripted agent (e.g. the usage tests); otherwise
+	// wire in the default fake agent the same way a user would.
+	if os.Getenv("CHIEF_AGENT_PATH") == "" {
+		cmd.Env = append(cmd.Env,
+			"CHIEF_AGENT=claude",
+			"CHIEF_AGENT_PATH="+fakeAgent(t, t.TempDir()),
+		)
+	}
 
 	var out bytes.Buffer
 	cmd.Stdout = &out

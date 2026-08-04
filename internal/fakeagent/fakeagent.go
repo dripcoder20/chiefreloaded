@@ -49,6 +49,21 @@ type Behaviour struct {
 	// CreateBranch has the agent switch branches behind the orchestrator's back.
 	// The prompt forbids it; detecting it anyway is the point.
 	CreateBranch string
+	// Usage, when set, emits a Claude-style result line carrying token counts and
+	// cost, so the usage attribution and aggregation path runs end to end. It is
+	// emitted before any ExitCode exit, so even a crashing attempt reports usage.
+	Usage *Usage
+}
+
+// Usage is the token and cost payload the fake reports for one attempt. It maps
+// onto Claude's result-line usage shape.
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+	CacheRead    int64
+	CacheWrite   int64
+	CostUSD      float64
+	Model        string
 }
 
 // ToolCall is a fake tool invocation.
@@ -203,10 +218,29 @@ func script(b Behaviour, storyID, title string) string {
 		// providers emit it.
 		emit(assistantText("Story complete. <chief-done/>"))
 	}
+	if b.Usage != nil {
+		emit(resultLine(b.Usage))
+	}
 	if b.ExitCode != 0 {
 		fmt.Fprintf(&sb, "exit %d\n", b.ExitCode)
 	}
 	return sb.String()
+}
+
+// resultLine renders a usage payload as Claude's final result line, which the
+// production parser turns into a normalized usage event.
+func resultLine(u *Usage) map[string]any {
+	return map[string]any{
+		"type":           "result",
+		"total_cost_usd": u.CostUSD,
+		"model":          u.Model,
+		"usage": map[string]any{
+			"input_tokens":                u.InputTokens,
+			"output_tokens":               u.OutputTokens,
+			"cache_read_input_tokens":     u.CacheRead,
+			"cache_creation_input_tokens": u.CacheWrite,
+		},
+	}
 }
 
 func assistantText(text string) map[string]any {

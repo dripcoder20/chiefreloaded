@@ -19,6 +19,16 @@ type Settings struct {
 	// OnComplete is chief's per-PRD push and pull-request automation. Honoured
 	// only when Git.Mode is "per-prd"; per-story supersedes it.
 	OnComplete OnCompleteSettings `json:"onComplete"`
+	// Usage is the thresholds for approaching-limit and unusual-spend warnings.
+	Usage UsageSettings `json:"usage"`
+}
+
+// UsageSettings is the UI-facing shape of the usage-warning thresholds. Percents
+// are 0–100; CostWarnAmount is optional (nil = no per-session cost warning).
+type UsageSettings struct {
+	ContextWarnPercent     float64  `json:"contextWarnPercent"`
+	ContextCriticalPercent float64  `json:"contextCriticalPercent"`
+	CostWarnAmount         *float64 `json:"costWarnAmount,omitempty"`
 }
 
 // GitSettings is Loop's branch and pull-request behaviour.
@@ -70,6 +80,11 @@ func settingsFrom(c config.LoopConfig) Settings {
 		Agent:      AgentSettings{Provider: c.Agent.Provider, CLIPath: c.Agent.CLIPath},
 		Worktree:   WorktreeSettings{Setup: c.Worktree.Setup},
 		OnComplete: OnCompleteSettings{Push: c.OnComplete.Push, CreatePR: c.OnComplete.CreatePR},
+		Usage: UsageSettings{
+			ContextWarnPercent:     c.Usage.ContextWarnPercent,
+			ContextCriticalPercent: c.Usage.ContextCriticalPercent,
+			CostWarnAmount:         c.Usage.CostWarnAmount,
+		},
 	}
 }
 
@@ -87,6 +102,9 @@ func (s Settings) toConfig() config.LoopConfig {
 	c.Worktree.Setup = s.Worktree.Setup
 	c.OnComplete.Push = s.OnComplete.Push
 	c.OnComplete.CreatePR = s.OnComplete.CreatePR
+	c.Usage.ContextWarnPercent = s.Usage.ContextWarnPercent
+	c.Usage.ContextCriticalPercent = s.Usage.ContextCriticalPercent
+	c.Usage.CostWarnAmount = s.Usage.CostWarnAmount
 	// Normalise here so an invalid value from the UI cannot reach disk and put
 	// the project into a state the next load has to guess its way out of.
 	c.Normalise()
