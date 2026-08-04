@@ -117,6 +117,10 @@ func (p *Provider) CleanOutput(output string) string {
 // so the production parser is what gets exercised.
 func (p *Provider) ParseLine(line string) *loop.Event { return loop.ParseLine(line) }
 
+// UsageFormat declares that same Claude wire format to the usage observer, which
+// would otherwise key off Name() and find no extractor for "fake".
+func (p *Provider) UsageFormat() string { return "claude" }
+
 // InteractiveCommand is the PRD-authoring path. The fake just echoes, which is
 // enough to prove the plumbing without a terminal.
 func (p *Provider) InteractiveCommand(workDir, prompt string) *exec.Cmd {

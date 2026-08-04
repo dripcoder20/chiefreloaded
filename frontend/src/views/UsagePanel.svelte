@@ -383,13 +383,16 @@
     aria-label="Usage details"
     bind:this={dialogEl}
     onkeydown={onDialogKey}
+    tabindex="-1"
   >
     <header class="head">
       <h2>Usage</h2>
       <button class="close" onclick={onclose} aria-label="Close usage panel">×</button>
     </header>
 
-    <div class="tabs" role="tablist" aria-label="Usage scope" onkeydown={onTabKey}>
+    <!-- The tabs themselves carry a roving tabindex, so the list is reached
+         through them rather than being a tab stop of its own. -->
+    <div class="tabs" role="tablist" aria-label="Usage scope" onkeydown={onTabKey} tabindex="-1">
       {#each scopes as s}
         <button
           id={`usage-tab-${s.key}`}

@@ -57,6 +57,18 @@ func (g *GroupLeader) LoopCommand(ctx context.Context, prompt, workDir string) *
 	return cmd
 }
 
+// UsageFormat forwards the wrapped provider's output-format declaration.
+//
+// The embedded field is the Provider interface, so Go promotes only the methods
+// that interface declares — UsageFormat is not one of them, and without this a
+// wrapped provider would silently report no usage at all.
+func (g *GroupLeader) UsageFormat() string {
+	if f, ok := g.Provider.(chiefloop.UsageFormatter); ok {
+		return f.UsageFormat()
+	}
+	return g.Provider.Name()
+}
+
 // Kill terminates the current agent and everything it spawned.
 //
 // Safe to call when nothing is running, and safe to call more than once: a

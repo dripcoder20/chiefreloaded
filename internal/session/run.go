@@ -251,7 +251,14 @@ func (r *run) runOneStory(ctx context.Context) (outcome, error) {
 		StoryID: storyID, Attempt: attempt, Text: storyTitle,
 	})
 
-	l := chiefloop.NewStoryLoop(r.prdPath, r.workDir, r.provider)
+	// Usage does not ride on chief's Event — that struct is vendored and cannot
+	// grow a field from our side — so the provider is decorated to report it as
+	// a side effect of parsing each line. The callback runs on the agent's stdout
+	// scanner goroutine, the same one that already feeds l.Events().
+	observed := chiefloop.ObserveUsage(r.provider, func(u *chiefloop.Usage, err error) {
+		r.observeUsage(storyID, attempt, u, err)
+	})
+	l := chiefloop.NewStoryLoop(r.prdPath, r.workDir, observed)
 	r.mu.Lock()
 	r.active = l
 	r.mu.Unlock()
@@ -402,17 +409,11 @@ func (r *run) markDone(ctx context.Context, storyID, storyTitle string, check Co
 // — the goroutine scanning the agent's stdout — will block.
 func (r *run) forwardAgentEvents(l *chiefloop.Loop, storyID string, attempt int) {
 	for ev := range l.Events() {
-		// Usage can ride along on a content event (Claude assistant text + usage)
-		// or arrive as a usage-only event, so attribute it whenever it is present
-		// regardless of the event kind, and only once per payload.
-		if ev.Usage != nil {
-			r.recordUsage(storyID, attempt, ev.Usage)
-		}
-
 		kind, ok := agentEventKind(ev.Type)
 		if !ok {
-			// Story-done, completion, usage and max-iteration events drive the state
-			// machine or the usage ledger instead, not the agent-output stream.
+			// Story-done, completion and max-iteration events drive the state
+			// machine instead of the agent-output stream. Usage never appears here
+			// at all — see observeUsage.
 			continue
 		}
 		out := Event{
@@ -427,6 +428,23 @@ func (r *run) forwardAgentEvents(l *chiefloop.Loop, storyID string, attempt int)
 		}
 		r.sess.publish(out)
 	}
+}
+
+// observeUsage handles one report from the usage-observing provider: a parsed
+// payload, or a malformed one.
+//
+// A malformed payload is surfaced as a warning and discarded. It must never stop
+// the run — a provider changing its usage shape is not a reason to abandon work
+// the agent has already done.
+func (r *run) observeUsage(storyID string, attempt int, u *chiefloop.Usage, err error) {
+	if err != nil {
+		r.sess.publish(Event{
+			Kind: EvUsageError, RunID: r.id, PRD: r.prdName,
+			StoryID: storyID, Attempt: attempt, Text: err.Error(),
+		})
+		return
+	}
+	r.recordUsage(storyID, attempt, u)
 }
 
 // recordUsage attributes one usage payload to this attempt, story, run and

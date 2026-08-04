@@ -88,16 +88,9 @@ func TestParseLineOpenCode_stepFinishStop(t *testing.T) {
 func TestParseLineOpenCode_stepFinishToolCalls(t *testing.T) {
 	line := `{"type":"step_finish","timestamp":1767036061205,"sessionID":"ses_494719016ffe85dkDMj0FPRbHK","part":{"id":"prt_b6b8e85fb001L4I3WHMqH6EQNI","sessionID":"ses_494719016ffe85dkDMj0FPRbHK","messageID":"msg_b6b8e702b0012XuEC4bGe0XhKa","type":"step-finish","reason":"tool-calls","snapshot":"ee3406d50c7d9048674bbb1a3e325d82513b74ed","cost":0,"tokens":{"input":21772,"output":110,"reasoning":0,"cache":{"read":0,"write":0}}}}`
 	ev := ParseLineOpenCode(line)
-	if ev == nil {
-		t.Fatal("expected usage event, got nil")
+	if ev != nil {
+		t.Errorf("expected nil (ignore step_finish with reason=tool-calls), got %v", ev)
 	}
-	// A non-terminal step_finish still carries usage, now surfaced as EventUsage.
-	if ev.Type != EventUsage {
-		t.Errorf("expected EventUsage, got %v", ev.Type)
-	}
-	assertInt64Ptr(t, "InputTokens", ev.Usage.InputTokens, 21772)
-	assertInt64Ptr(t, "OutputTokens", ev.Usage.OutputTokens, 110)
-	assertFloatPtr(t, "ReportedCost", ev.Usage.ReportedCost, 0)
 }
 
 func TestParseLineOpenCode_error(t *testing.T) {

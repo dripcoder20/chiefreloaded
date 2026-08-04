@@ -2,7 +2,6 @@ package loop
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -32,10 +31,6 @@ const (
 	EventRetrying
 	// EventWatchdogTimeout is emitted when the watchdog kills a hung process.
 	EventWatchdogTimeout
-	// EventUsage is emitted when a provider reports normalized usage for a payload.
-	EventUsage
-	// EventWarning is emitted when a payload cannot be parsed but the run continues.
-	EventWarning
 )
 
 // String returns the string representation of an EventType.
@@ -61,10 +56,6 @@ func (e EventType) String() string {
 		return "Retrying"
 	case EventWatchdogTimeout:
 		return "WatchdogTimeout"
-	case EventUsage:
-		return "Usage"
-	case EventWarning:
-		return "Warning"
 	default:
 		return "Unknown"
 	}
@@ -79,9 +70,8 @@ type Event struct {
 	ToolInput  map[string]interface{}
 	StoryID    string
 	Err        error
-	RetryCount int    // Current retry attempt (1-based)
-	RetryMax   int    // Maximum retries allowed
-	Usage      *Usage // Normalized provider usage, set on EventUsage
+	RetryCount int // Current retry attempt (1-based)
+	RetryMax   int // Maximum retries allowed
 }
 
 // streamMessage represents the top-level structure of a stream-json line.
@@ -138,107 +128,17 @@ func ParseLine(line string) *Event {
 		return nil
 
 	case "assistant":
-		return attachClaudeUsage(parseAssistantMessage(msg.Message), msg.Message)
+		return parseAssistantMessage(msg.Message)
 
 	case "user":
 		return parseUserMessage(msg.Message)
 
 	case "result":
-		return parseClaudeResult(line)
+		return nil
 
 	default:
 		return nil
 	}
-}
-
-// claudeUsageRaw mirrors the token fields Claude reports in a usage object.
-// Pointer fields keep a missing field distinct from a reported value of 0.
-type claudeUsageRaw struct {
-	InputTokens              *int64 `json:"input_tokens"`
-	OutputTokens             *int64 `json:"output_tokens"`
-	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
-}
-
-// claudeMessageMeta carries the usage and model an assistant message reports
-// alongside its content blocks.
-type claudeMessageMeta struct {
-	Model string          `json:"model"`
-	Usage json.RawMessage `json:"usage"`
-}
-
-// claudeResultMeta carries the total cost and usage a final result line reports.
-type claudeResultMeta struct {
-	TotalCostUSD *float64        `json:"total_cost_usd"`
-	Model        string          `json:"model"`
-	Usage        json.RawMessage `json:"usage"`
-}
-
-// warningEvent builds a diagnosable warning event for a malformed usage payload
-// so the run continues instead of terminating.
-func warningEvent(provider string, err error) *Event {
-	return &Event{
-		Type: EventWarning,
-		Text: fmt.Sprintf("%s: malformed usage payload: %v", provider, err),
-	}
-}
-
-// claudeUsageFrom normalizes a Claude-shaped usage object plus model and cost.
-// It returns an error only when the usage object is present but malformed.
-func claudeUsageFrom(rawUsage json.RawMessage, model string, cost *float64) (*Usage, error) {
-	u := &Usage{Model: model, ReportedCost: cost}
-	if len(rawUsage) > 0 && string(rawUsage) != "null" {
-		var raw claudeUsageRaw
-		if err := json.Unmarshal(rawUsage, &raw); err != nil {
-			return nil, err
-		}
-		u.InputTokens = raw.InputTokens
-		u.OutputTokens = raw.OutputTokens
-		u.CacheReadTokens = raw.CacheReadInputTokens
-		u.CacheWriteTokens = raw.CacheCreationInputTokens
-	}
-	return finalizeUsage(u)
-}
-
-// attachClaudeUsage extracts usage from an assistant message and attaches it to
-// the produced content event, emitting a standalone usage event when the message
-// carried usage but no content.
-func attachClaudeUsage(ev *Event, raw json.RawMessage) *Event {
-	if len(raw) == 0 {
-		return ev
-	}
-	var meta claudeMessageMeta
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		return ev
-	}
-	usage, err := claudeUsageFrom(meta.Usage, meta.Model, nil)
-	if err != nil {
-		return warningEvent("claude", err)
-	}
-	if usage == nil {
-		return ev
-	}
-	if ev == nil {
-		return &Event{Type: EventUsage, Usage: usage}
-	}
-	ev.Usage = usage
-	return ev
-}
-
-// parseClaudeResult extracts usage and cost from a final result line.
-func parseClaudeResult(line string) *Event {
-	var meta claudeResultMeta
-	if err := json.Unmarshal([]byte(line), &meta); err != nil {
-		return nil
-	}
-	usage, err := claudeUsageFrom(meta.Usage, meta.Model, meta.TotalCostUSD)
-	if err != nil {
-		return warningEvent("claude", err)
-	}
-	if usage == nil {
-		return nil
-	}
-	return &Event{Type: EventUsage, Usage: usage}
 }
 
 // parseAssistantMessage parses an assistant message and returns appropriate events.

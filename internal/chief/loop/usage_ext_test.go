@@ -26,15 +26,41 @@ func assertFloatPtr(t *testing.T, field string, p *float64, want float64) {
 	}
 }
 
-func usageEvent(t *testing.T, ev *Event) *Usage {
+// extracted fails the test unless the line yielded usage without an error.
+func extracted(t *testing.T, extract usageExtractor, line string) *Usage {
 	t.Helper()
-	if ev == nil {
-		t.Fatal("expected event, got nil")
+	u, err := extract(line)
+	if err != nil {
+		t.Fatalf("unexpected extraction error: %v", err)
 	}
-	if ev.Usage == nil {
-		t.Fatalf("expected Usage set on %v event, got nil", ev.Type)
+	if u == nil {
+		t.Fatal("expected usage, got nil (unavailable)")
 	}
-	return ev.Usage
+	return u
+}
+
+// assertNoUsage fails the test unless the line yielded neither usage nor error.
+func assertNoUsage(t *testing.T, extract usageExtractor, line string) {
+	t.Helper()
+	u, err := extract(line)
+	if err != nil {
+		t.Fatalf("unexpected extraction error: %v", err)
+	}
+	if u != nil {
+		t.Errorf("expected no usage, got %+v", u)
+	}
+}
+
+// assertMalformed fails the test unless the line was reported as malformed.
+func assertMalformed(t *testing.T, extract usageExtractor, line string) {
+	t.Helper()
+	u, err := extract(line)
+	if err == nil {
+		t.Fatalf("expected a malformed-payload error, got usage %+v", u)
+	}
+	if u != nil {
+		t.Errorf("a malformed payload must yield no usage, got %+v", u)
+	}
 }
 
 // --- Model semantics -------------------------------------------------------
@@ -108,10 +134,9 @@ func TestFinalizeUsage_defaultsCurrencyWhenCostPresent(t *testing.T) {
 
 // --- Claude ----------------------------------------------------------------
 
-func TestParseLine_claudeComplete(t *testing.T) {
+func TestExtractClaudeUsage_complete(t *testing.T) {
 	line := `{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":2,"output_tokens":8,"cache_read_input_tokens":20572,"cache_creation_input_tokens":9974}}}`
-	ev := ParseLine(line)
-	u := usageEvent(t, ev)
+	u := extracted(t, extractClaudeUsage, line)
 	if u.Model != "claude-opus-4-8" {
 		t.Errorf("expected model claude-opus-4-8, got %q", u.Model)
 	}
@@ -119,15 +144,11 @@ func TestParseLine_claudeComplete(t *testing.T) {
 	assertInt64Ptr(t, "OutputTokens", u.OutputTokens, 8)
 	assertInt64Ptr(t, "CacheReadTokens", u.CacheReadTokens, 20572)
 	assertInt64Ptr(t, "CacheWriteTokens", u.CacheWriteTokens, 9974)
-	// Assistant text must still be carried alongside the usage.
-	if ev.Type != EventAssistantText || ev.Text != "working" {
-		t.Errorf("expected assistant text carried, got %v %q", ev.Type, ev.Text)
-	}
 }
 
-func TestParseLine_claudePartial(t *testing.T) {
+func TestExtractClaudeUsage_partial(t *testing.T) {
 	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":100,"output_tokens":0}}}`
-	u := usageEvent(t, ParseLine(line))
+	u := extracted(t, extractClaudeUsage, line)
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 100)
 	assertInt64Ptr(t, "OutputTokens", u.OutputTokens, 0)
 	if u.CacheReadTokens != nil {
@@ -138,13 +159,9 @@ func TestParseLine_claudePartial(t *testing.T) {
 	}
 }
 
-func TestParseLine_claudeResultCost(t *testing.T) {
+func TestExtractClaudeUsage_resultCost(t *testing.T) {
 	line := `{"type":"result","subtype":"success","total_cost_usd":0.1234,"usage":{"input_tokens":50,"output_tokens":25}}`
-	ev := ParseLine(line)
-	u := usageEvent(t, ev)
-	if ev.Type != EventUsage {
-		t.Errorf("expected EventUsage, got %v", ev.Type)
-	}
+	u := extracted(t, extractClaudeUsage, line)
 	assertFloatPtr(t, "ReportedCost", u.ReportedCost, 0.1234)
 	if u.Currency != UsageCurrencyUSD {
 		t.Errorf("expected currency USD, got %q", u.Currency)
@@ -152,51 +169,46 @@ func TestParseLine_claudeResultCost(t *testing.T) {
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 50)
 }
 
-func TestParseLine_claudeMissingUsage(t *testing.T) {
+func TestExtractClaudeUsage_missing(t *testing.T) {
 	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"no usage here"}]}}`
-	ev := ParseLine(line)
-	if ev == nil {
-		t.Fatal("expected assistant text event, got nil")
-	}
-	if ev.Usage != nil {
-		t.Errorf("expected no usage, got %+v", ev.Usage)
-	}
-	if ev.Type != EventAssistantText {
-		t.Errorf("expected EventAssistantText, got %v", ev.Type)
-	}
+	assertNoUsage(t, extractClaudeUsage, line)
 }
 
-func TestParseLine_claudeMalformedUsage(t *testing.T) {
+func TestExtractClaudeUsage_malformed(t *testing.T) {
 	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"x"}],"usage":{"input_tokens":"oops"}}}`
-	ev := ParseLine(line)
-	if ev == nil {
-		t.Fatal("expected warning event, got nil")
-	}
-	if ev.Type != EventWarning {
-		t.Fatalf("expected EventWarning, got %v", ev.Type)
-	}
-	if ev.Text == "" {
-		t.Error("expected a diagnosable warning message")
-	}
+	assertMalformed(t, extractClaudeUsage, line)
 }
 
-func TestParseLine_claudeDuplicateUsage(t *testing.T) {
+func TestExtractClaudeUsage_duplicate(t *testing.T) {
 	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"x"}],"usage":{"input_tokens":5,"output_tokens":7}}}`
-	first := usageEvent(t, ParseLine(line))
-	second := usageEvent(t, ParseLine(line))
-	// Parsing is pure: duplicate delivery yields identical values (dedup is a
+	// Extraction is pure: duplicate delivery yields identical values (dedup is a
 	// later aggregation concern, not the parser's).
+	first := extracted(t, extractClaudeUsage, line)
+	second := extracted(t, extractClaudeUsage, line)
 	assertInt64Ptr(t, "first InputTokens", first.InputTokens, 5)
 	assertInt64Ptr(t, "second InputTokens", second.InputTokens, 5)
 	assertInt64Ptr(t, "first OutputTokens", first.OutputTokens, 7)
 	assertInt64Ptr(t, "second OutputTokens", second.OutputTokens, 7)
 }
 
+// The vendored parser must be untouched by usage extraction: an assistant line
+// still produces its text event, and a result line is still ignored.
+func TestParseLine_isUnchangedByUsageExtraction(t *testing.T) {
+	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"working"}],"usage":{"input_tokens":2}}}`
+	ev := ParseLine(line)
+	if ev == nil || ev.Type != EventAssistantText || ev.Text != "working" {
+		t.Fatalf("expected assistant text event, got %+v", ev)
+	}
+	if ev := ParseLine(`{"type":"result","total_cost_usd":0.1}`); ev != nil {
+		t.Errorf("expected result line to stay ignored upstream, got %+v", ev)
+	}
+}
+
 // --- Codex -----------------------------------------------------------------
 
-func TestParseLineCodex_usagePartial(t *testing.T) {
+func TestExtractCodexUsage_partial(t *testing.T) {
 	line := `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":0}}`
-	u := usageEvent(t, ParseLineCodex(line))
+	u := extracted(t, extractCodexUsage, line)
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 10)
 	assertInt64Ptr(t, "OutputTokens", u.OutputTokens, 0)
 	if u.CacheReadTokens != nil {
@@ -204,37 +216,28 @@ func TestParseLineCodex_usagePartial(t *testing.T) {
 	}
 }
 
-func TestParseLineCodex_usageMissing(t *testing.T) {
-	if ev := ParseLineCodex(`{"type":"turn.completed"}`); ev != nil {
-		t.Errorf("expected nil for turn.completed without usage, got %v", ev)
-	}
+func TestExtractCodexUsage_missing(t *testing.T) {
+	assertNoUsage(t, extractCodexUsage, `{"type":"turn.completed"}`)
 }
 
-func TestParseLineCodex_usageMalformed(t *testing.T) {
-	line := `{"type":"turn.completed","usage":{"input_tokens":[1,2,3]}}`
-	ev := ParseLineCodex(line)
-	if ev == nil || ev.Type != EventWarning {
-		t.Fatalf("expected EventWarning, got %v", ev)
-	}
+func TestExtractCodexUsage_malformed(t *testing.T) {
+	assertMalformed(t, extractCodexUsage, `{"type":"turn.completed","usage":{"input_tokens":[1,2,3]}}`)
 }
 
-func TestParseLineCodex_usageDuplicate(t *testing.T) {
+func TestExtractCodexUsage_duplicate(t *testing.T) {
 	line := `{"type":"turn.completed","usage":{"input_tokens":24763,"cached_input_tokens":24448,"output_tokens":122}}`
-	a := usageEvent(t, ParseLineCodex(line))
-	b := usageEvent(t, ParseLineCodex(line))
+	a := extracted(t, extractCodexUsage, line)
+	b := extracted(t, extractCodexUsage, line)
 	assertInt64Ptr(t, "a InputTokens", a.InputTokens, 24763)
 	assertInt64Ptr(t, "b InputTokens", b.InputTokens, 24763)
+	assertInt64Ptr(t, "a CacheReadTokens", a.CacheReadTokens, 24448)
 }
 
 // --- OpenCode --------------------------------------------------------------
 
-func TestParseLineOpenCode_usageComplete(t *testing.T) {
+func TestExtractOpenCodeUsage_complete(t *testing.T) {
 	line := `{"type":"step_finish","part":{"reason":"tool-calls","cost":0.001,"tokens":{"input":671,"output":8,"reasoning":0,"cache":{"read":21415,"write":0}}}}`
-	ev := ParseLineOpenCode(line)
-	u := usageEvent(t, ev)
-	if ev.Type != EventUsage {
-		t.Errorf("expected EventUsage, got %v", ev.Type)
-	}
+	u := extracted(t, extractOpenCodeUsage, line)
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 671)
 	assertInt64Ptr(t, "OutputTokens", u.OutputTokens, 8)
 	assertInt64Ptr(t, "ReasoningTokens", u.ReasoningTokens, 0)
@@ -243,20 +246,21 @@ func TestParseLineOpenCode_usageComplete(t *testing.T) {
 	assertFloatPtr(t, "ReportedCost", u.ReportedCost, 0.001)
 }
 
-func TestParseLineOpenCode_usageOnStopCarriesComplete(t *testing.T) {
+// A step_finish with reason "stop" still ends the run upstream; usage rides the
+// same line and must be extracted regardless of the reason.
+func TestExtractOpenCodeUsage_onStop(t *testing.T) {
 	line := `{"type":"step_finish","part":{"reason":"stop","cost":0.002,"tokens":{"input":10,"output":2}}}`
-	ev := ParseLineOpenCode(line)
-	if ev == nil || ev.Type != EventComplete {
-		t.Fatalf("expected EventComplete, got %v", ev)
-	}
-	u := usageEvent(t, ev)
+	u := extracted(t, extractOpenCodeUsage, line)
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 10)
 	assertFloatPtr(t, "ReportedCost", u.ReportedCost, 0.002)
+	if ev := ParseLineOpenCode(line); ev == nil || ev.Type != EventComplete {
+		t.Fatalf("expected upstream EventComplete to be unaffected, got %+v", ev)
+	}
 }
 
-func TestParseLineOpenCode_usagePartial(t *testing.T) {
+func TestExtractOpenCodeUsage_partial(t *testing.T) {
 	line := `{"type":"step_finish","part":{"reason":"tool-calls","tokens":{"input":5}}}`
-	u := usageEvent(t, ParseLineOpenCode(line))
+	u := extracted(t, extractOpenCodeUsage, line)
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 5)
 	if u.OutputTokens != nil {
 		t.Errorf("expected OutputTokens unavailable, got %d", *u.OutputTokens)
@@ -266,38 +270,28 @@ func TestParseLineOpenCode_usagePartial(t *testing.T) {
 	}
 }
 
-func TestParseLineOpenCode_usageMissing(t *testing.T) {
-	line := `{"type":"step_finish","part":{"reason":"tool-calls"}}`
-	if ev := ParseLineOpenCode(line); ev != nil {
-		t.Errorf("expected nil for step_finish without usage, got %v", ev)
-	}
+func TestExtractOpenCodeUsage_missing(t *testing.T) {
+	assertNoUsage(t, extractOpenCodeUsage, `{"type":"step_finish","part":{"reason":"tool-calls"}}`)
 }
 
-func TestParseLineOpenCode_usageMalformed(t *testing.T) {
+func TestExtractOpenCodeUsage_malformed(t *testing.T) {
 	line := `{"type":"step_finish","part":{"reason":"tool-calls","tokens":{"input":"nope"}}}`
-	ev := ParseLineOpenCode(line)
-	if ev == nil || ev.Type != EventWarning {
-		t.Fatalf("expected EventWarning, got %v", ev)
-	}
+	assertMalformed(t, extractOpenCodeUsage, line)
 }
 
-func TestParseLineOpenCode_usageDuplicate(t *testing.T) {
+func TestExtractOpenCodeUsage_duplicate(t *testing.T) {
 	line := `{"type":"step_finish","part":{"reason":"tool-calls","tokens":{"input":100,"output":50}}}`
-	a := usageEvent(t, ParseLineOpenCode(line))
-	b := usageEvent(t, ParseLineOpenCode(line))
+	a := extracted(t, extractOpenCodeUsage, line)
+	b := extracted(t, extractOpenCodeUsage, line)
 	assertInt64Ptr(t, "a OutputTokens", a.OutputTokens, 50)
 	assertInt64Ptr(t, "b OutputTokens", b.OutputTokens, 50)
 }
 
 // --- Cursor ----------------------------------------------------------------
 
-func TestParseLineCursor_usageComplete(t *testing.T) {
+func TestExtractCursorUsage_complete(t *testing.T) {
 	line := `{"type":"result","subtype":"success","model":"claude-4-sonnet","total_cost_usd":0.045,"usage":{"input_tokens":1200,"output_tokens":300,"cache_read_input_tokens":800,"cache_creation_input_tokens":400}}`
-	ev := ParseLineCursor(line)
-	u := usageEvent(t, ev)
-	if ev.Type != EventUsage {
-		t.Errorf("expected EventUsage, got %v", ev.Type)
-	}
+	u := extracted(t, extractCursorUsage, line)
 	if u.Model != "claude-4-sonnet" {
 		t.Errorf("expected model claude-4-sonnet, got %q", u.Model)
 	}
@@ -308,9 +302,9 @@ func TestParseLineCursor_usageComplete(t *testing.T) {
 	assertFloatPtr(t, "ReportedCost", u.ReportedCost, 0.045)
 }
 
-func TestParseLineCursor_usagePartial(t *testing.T) {
+func TestExtractCursorUsage_partial(t *testing.T) {
 	line := `{"type":"result","subtype":"success","usage":{"input_tokens":10,"output_tokens":0}}`
-	u := usageEvent(t, ParseLineCursor(line))
+	u := extracted(t, extractCursorUsage, line)
 	assertInt64Ptr(t, "InputTokens", u.InputTokens, 10)
 	assertInt64Ptr(t, "OutputTokens", u.OutputTokens, 0)
 	if u.CacheReadTokens != nil {
@@ -318,25 +312,28 @@ func TestParseLineCursor_usagePartial(t *testing.T) {
 	}
 }
 
-func TestParseLineCursor_usageMissing(t *testing.T) {
-	line := `{"type":"result","subtype":"success","duration_ms":1234,"result":"done"}`
-	if ev := ParseLineCursor(line); ev != nil {
-		t.Errorf("expected nil for result without usage, got %v", ev)
-	}
+func TestExtractCursorUsage_missing(t *testing.T) {
+	assertNoUsage(t, extractCursorUsage, `{"type":"result","subtype":"success","duration_ms":1234,"result":"done"}`)
 }
 
-func TestParseLineCursor_usageMalformed(t *testing.T) {
-	line := `{"type":"result","subtype":"success","usage":{"input_tokens":{"x":1}}}`
-	ev := ParseLineCursor(line)
-	if ev == nil || ev.Type != EventWarning {
-		t.Fatalf("expected EventWarning, got %v", ev)
-	}
+func TestExtractCursorUsage_malformed(t *testing.T) {
+	assertMalformed(t, extractCursorUsage, `{"type":"result","subtype":"success","usage":{"input_tokens":{"x":1}}}`)
 }
 
-func TestParseLineCursor_usageDuplicate(t *testing.T) {
+func TestExtractCursorUsage_duplicate(t *testing.T) {
 	line := `{"type":"result","subtype":"success","usage":{"input_tokens":1200,"output_tokens":300}}`
-	a := usageEvent(t, ParseLineCursor(line))
-	b := usageEvent(t, ParseLineCursor(line))
+	a := extracted(t, extractCursorUsage, line)
+	b := extracted(t, extractCursorUsage, line)
 	assertInt64Ptr(t, "a InputTokens", a.InputTokens, 1200)
 	assertInt64Ptr(t, "b InputTokens", b.InputTokens, 1200)
+}
+
+// A line that is not JSON at all is upstream's business, not a usage error.
+func TestExtractUsage_nonJSONLineIsNotAnError(t *testing.T) {
+	for name, extract := range usageExtractors {
+		u, err := extract("this is plain text, not json")
+		if u != nil || err != nil {
+			t.Errorf("%s: expected (nil, nil) for a non-JSON line, got (%+v, %v)", name, u, err)
+		}
+	}
 }
