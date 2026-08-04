@@ -4,7 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/dripcoder/loop/internal/authoring"
+	"github.com/dripcoder/loop/internal/fakeagent"
 )
 
 // These cover the PRD-action backend the rail's overflow / context menus call:
@@ -100,5 +104,81 @@ func TestDeletePRDUnknownPRD(t *testing.T) {
 	}
 	if err := s.DeletePRD("nope"); err == nil {
 		t.Error("expected an error deleting an unknown PRD")
+	}
+}
+
+// --- US-006: deletion safety and file-open errors ---------------------------
+
+// Deleting a PRD that is being implemented would silently terminate the run, or
+// leave the agent writing into a directory that no longer exists.
+func TestDeletePRDRefusedWhileImplementationIsActive(t *testing.T) {
+	s, root, _ := startRun(t, oneStoryPRD, fakeagent.Behaviour{
+		Text: "working", WriteFile: "out.txt", FileBody: "x", Commit: true, Done: true,
+	})
+
+	// Force the run to look active regardless of how far it has got, so the test
+	// is about the guard rather than about race timing.
+	s.mu.Lock()
+	for id, snap := range s.runs {
+		snap.State = StateRunning
+		s.runs[id] = snap
+	}
+	s.mu.Unlock()
+
+	err := s.DeletePRD("main")
+	if err == nil {
+		t.Fatal("expected deletion to be refused while the PRD is being implemented")
+	}
+	if !strings.Contains(err.Error(), "main") {
+		t.Errorf("error %q should name the PRD", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".chief", "prds", "main")); statErr != nil {
+		t.Errorf("the PRD directory must survive a refused deletion: %v", statErr)
+	}
+}
+
+func TestDeletePRDRefusedWhileAuthoringIsOpen(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "docs", oneStoryPRD)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	s.mu.Lock()
+	s.authorSpecs["author-1"] = authoring.Spec{Kind: authoring.KindEdit, PRD: "docs"}
+	s.mu.Unlock()
+
+	err := s.DeletePRD("docs")
+	if err == nil {
+		t.Fatal("expected deletion to be refused while an authoring session is open")
+	}
+	if !strings.Contains(err.Error(), "authoring session") {
+		t.Errorf("error %q should explain that an authoring session is in the way", err)
+	}
+}
+
+// A PRD listed but whose file has gone must produce an actionable error rather
+// than a path the OS would open as a directory.
+func TestPRDPathReportsAMissingMarkdownFile(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "gone", oneStoryPRD)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(root, ".chief", "prds", "gone", "prd.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := s.PRDPath("gone")
+	if err == nil {
+		t.Fatalf("expected an error for a missing markdown file, got %q", path)
+	}
+	if !strings.Contains(err.Error(), "gone") {
+		t.Errorf("error %q should name the PRD", err)
 	}
 }

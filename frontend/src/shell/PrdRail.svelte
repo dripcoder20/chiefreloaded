@@ -6,7 +6,7 @@
     requestNewPRD,
     editPrd,
     openPrdFile,
-    deletePrd,
+    confirmDeletePrd,
     openOnGitHub,
     openInApp,
   } from "../stores/app.svelte";
@@ -42,7 +42,9 @@
   const ACTIONS: Action[] = [
     { key: "edit", label: "Edit PRD", run: (p) => editPrd(p) },
     { key: "open", label: "Open markdown file", run: (p) => openPrdFile(p) },
-    { key: "delete", label: "Delete PRD", run: (p) => deletePrd(p), destructive: true },
+    // Deleting asks first; the dialog names its target before any file is
+    // removed. See the confirmation in App.svelte.
+    { key: "delete", label: "Delete PRD", run: (p) => confirmDeletePrd(p), destructive: true },
   ];
 
   // A single open-menu state means opening one menu necessarily closes any other.

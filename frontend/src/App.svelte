@@ -4,7 +4,9 @@
     adjustBudget,
     answerQuestion,
     app,
+    cancelDeletePrd,
     connect,
+    deletePrd,
     disconnect,
     pauseRun,
     resumeRun,
@@ -146,6 +148,22 @@
             {o.label}
           </button>
         {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if app.pendingDelete}
+    {@const target = app.pendingDelete}
+    <!-- Deleting removes a directory of work, so the dialog names its target and
+         nothing is touched until Delete is chosen. -->
+    <div class="question" role="alertdialog" aria-label="Delete PRD {target}">
+      <div>
+        <strong>Delete “{target}”?</strong>
+        <p>Its PRD, progress notes and agent logs are removed. This cannot be undone.</p>
+      </div>
+      <div class="options">
+        <button onclick={cancelDeletePrd}>Cancel</button>
+        <button class="destructive" onclick={() => deletePrd(target)}>Delete PRD</button>
       </div>
     </div>
   {/if}

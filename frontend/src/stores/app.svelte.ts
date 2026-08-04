@@ -98,6 +98,9 @@ class AppState {
    */
   usage = $state<UsageReport | null>(null);
 
+  /** The PRD a delete confirmation is currently asking about, if any. */
+  pendingDelete = $state<string | null>(null);
+
   /** Which local editors are installed, for the repository launchers. */
   localApps = $state<AppStatus[]>([]);
   /** True while a repository launch is in flight, so one click launches once. */
@@ -382,10 +385,28 @@ export async function openPrdFile(name: string): Promise<void> {
 }
 
 /**
+ * Ask before deleting. Deletion removes a directory of work, so the action menu
+ * raises a dialog naming its target rather than acting on the click.
+ */
+export function confirmDeletePrd(name: string): void {
+  app.pendingDelete = name;
+}
+
+/** Dismiss the confirmation, leaving the PRD and its files untouched. */
+export function cancelDeletePrd(): void {
+  app.pendingDelete = null;
+}
+
+/**
  * Delete a PRD and everything under it. Clears the selection when the deleted
  * PRD was the selected one, so the rail does not point at a row that is gone.
+ *
+ * The rail entry is removed only after the backend confirms: a refused delete —
+ * the PRD is being implemented, or has an authoring session open — must leave
+ * the list exactly as it was, with the reason on screen.
  */
 export async function deletePrd(name: string): Promise<void> {
+  app.pendingDelete = null;
   try {
     await api.prd.delete(name);
     if (app.selectedPrd === name) {
@@ -395,6 +416,9 @@ export async function deletePrd(name: string): Promise<void> {
     await reloadPrds();
   } catch (err) {
     app.error = String(err);
+    // Re-read the authoritative list so a partially applied or refused delete
+    // cannot leave the rail disagreeing with what is on disk.
+    await reloadPrds();
   }
 }
 

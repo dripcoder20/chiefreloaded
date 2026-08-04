@@ -98,19 +98,20 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [ ] If the PRD file is missing or unreadable, the application displays an actionable error and does not start an empty replacement PRD.
 
 ### US-006: Delete or open a PRD markdown file from its action menu
+**Status:** done
 **Priority:** 6
 **Description:** As a user, I want to delete a PRD safely or open its markdown file in my default editor so that I can manage the PRD directly from the sidebar.
 
 **Acceptance Criteria:**
-- [ ] Selecting `Delete PRD` opens a confirmation dialog naming the targeted PRD before any file is removed.
-- [ ] Canceling the dialog leaves the PRD and its files unchanged.
-- [ ] Confirming deletion uses the application's existing PRD deletion semantics and removes the PRD from the sidebar only after deletion succeeds.
-- [ ] Deletion is blocked with a clear explanation while that PRD has an active authoring or implementation session; the application does not silently terminate either session.
-- [ ] A deletion failure displays an actionable error and leaves or restores the sidebar entry.
-- [ ] Selecting `Open markdown file` asks the operating system to open the targeted PRD `.md` file with the default application associated with markdown files.
-- [ ] `Open markdown file` does not start an Edit PRD authoring session or change the active tab in Loop.
-- [ ] If the operating system has no application associated with markdown files, the application displays an actionable error that identifies the targeted file.
-- [ ] A missing or unreadable markdown file produces an actionable error and does not open another file or directory.
+- [x] Selecting `Delete PRD` opens a confirmation dialog naming the targeted PRD before any file is removed.
+- [x] Canceling the dialog leaves the PRD and its files unchanged.
+- [x] Confirming deletion uses the application's existing PRD deletion semantics and removes the PRD from the sidebar only after deletion succeeds.
+- [x] Deletion is blocked with a clear explanation while that PRD has an active authoring or implementation session; the application does not silently terminate either session.
+- [x] A deletion failure displays an actionable error and leaves or restores the sidebar entry.
+- [x] Selecting `Open markdown file` asks the operating system to open the targeted PRD `.md` file with the default application associated with markdown files.
+- [x] `Open markdown file` does not start an Edit PRD authoring session or change the active tab in Loop.
+- [x] If the operating system has no application associated with markdown files, the application displays an actionable error that identifies the targeted file.
+- [x] A missing or unreadable markdown file produces an actionable error and does not open another file or directory.
 
 ### US-007: Select authoring and implementation agents
 **Priority:** 7

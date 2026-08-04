@@ -14,7 +14,7 @@ const store = vi.hoisted(() => ({
   requestNewPRD: vi.fn(),
   editPrd: vi.fn(),
   openPrdFile: vi.fn(),
-  deletePrd: vi.fn(),
+  confirmDeletePrd: vi.fn(),
   openOnGitHub: vi.fn(),
   openInApp: vi.fn(),
   app: {
@@ -161,7 +161,7 @@ describe("target selection", () => {
 
     const menu = await openContextMenu("docs-site");
     await fireEvent.click(within(menu).getByText("Delete PRD"));
-    expect(store.deletePrd).toHaveBeenCalledWith("docs-site");
+    expect(store.confirmDeletePrd).toHaveBeenCalledWith("docs-site");
   });
 
   it("wires each action to its store function", async () => {
