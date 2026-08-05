@@ -21,7 +21,7 @@ import (
 // on screen rather than a toast that scrolls away.
 func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title string, check CommitCheck) error {
 	cfg := s.LoopConfig()
-	if !cfg.PerStory() {
+	if !s.stacksPerStory(r.prdName) {
 		return nil
 	}
 
@@ -101,7 +101,7 @@ func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title st
 // what happened before this existed, and the stack driver rejected every
 // command because no stack had been created.
 func (s *Session) ensureStoryBranch(ctx context.Context, r *run, storyID, title string) error {
-	if !s.LoopConfig().PerStory() {
+	if !s.stacksPerStory(r.prdName) {
 		return nil
 	}
 

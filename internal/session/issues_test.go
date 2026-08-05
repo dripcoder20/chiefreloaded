@@ -504,3 +504,55 @@ func TestPRDWorkflowRejectsAnUnsafeName(t *testing.T) {
 		}
 	}
 }
+
+// A PRD's own stacking choice wins over the project default. That is the point
+// of offering it at creation: one PRD can be worth stacking without turning
+// every PRD in the project into a stack.
+func TestStackPerStoryOverridesTheProjectDefault(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "checkout", twoStoryPRD)
+	writePRD(t, root, "docs", twoStoryPRD)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	// The project default is per-prd, so neither PRD stacks yet.
+	if s.stacksPerStory("checkout") {
+		t.Error("the project default is per-prd; checkout should not stack")
+	}
+
+	if err := s.SavePRDWorkflow("checkout", PRDWorkflow{StackPerStory: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.stacksPerStory("checkout") {
+		t.Error("checkout opted in and should stack")
+	}
+	// The opt-in is per PRD, not a project switch.
+	if s.stacksPerStory("docs") {
+		t.Error("docs did not opt in and should not stack")
+	}
+}
+
+// An unreadable sidecar must not fail the run: stacking is a preference, and
+// the run is the thing the user asked for.
+func TestStacksPerStoryFallsBackWhenTheSidecarIsUnreadable(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "checkout", twoStoryPRD)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	sidecar := filepath.Join(root, ".chief", "prds", "checkout", "loop.json")
+	if err := os.WriteFile(sidecar, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Falls back to the project setting rather than panicking or refusing.
+	if s.stacksPerStory("checkout") {
+		t.Error("expected the project default (per-prd) to apply")
+	}
+}

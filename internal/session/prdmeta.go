@@ -275,6 +275,23 @@ func (s *Session) DefaultAuthoringAgent() string {
 // DefaultImplementationAgent is the configured implementation agent.
 func (s *Session) DefaultImplementationAgent() string { return s.defaultImplementationAgent() }
 
+// stacksPerStory reports whether a run for this PRD should give each story its
+// own branch and pull request.
+//
+// The PRD's own choice wins over the project default. That is the point of
+// offering it when the PRD is created: one PRD in a project can be worth
+// stacking without turning every PRD into a stack, and the reverse.
+//
+// An unreadable sidecar falls back to the project setting rather than failing
+// the run — the run is the thing the user asked for, and this is a preference.
+func (s *Session) stacksPerStory(prd string) bool {
+	workflow, err := s.PRDWorkflowFor(prd)
+	if err == nil && workflow.StackPerStory {
+		return true
+	}
+	return s.LoopConfig().PerStory()
+}
+
 // agentIsAvailable reports whether an agent CLI was found on this machine.
 func (s *Session) agentIsAvailable(name string) bool {
 	for _, tool := range s.Environment().Agents {

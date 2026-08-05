@@ -20,6 +20,23 @@ import (
 // scripted. Here it is a pure function returning a Question, and a separate
 // piece of code that acts on the answer.
 
+// branchLabel names the current branch, falling back to wording that still
+// reads properly on a detached HEAD.
+func branchLabel(branch string) string {
+	if branch == "" {
+		return "the current checkout"
+	}
+	return branch
+}
+
+// askContext is what the caller has resolved about this particular run, as
+// opposed to what the project config says in general. Per-story-ness is a
+// per-PRD decision now, so the question is told rather than deriving it.
+type askContext struct {
+	perStory     bool
+	othersInRoot bool
+}
+
 // Option IDs for the branch-safety question.
 const (
 	optWorktree = "worktree"
@@ -28,10 +45,15 @@ const (
 	optCancel   = "cancel"
 )
 
-// branchSafetyQuestion returns the decision a run needs before it may start, or
-// nil when there is nothing to ask about.
+// branchSafetyQuestion returns the decision a run needs before it may start.
 //
-// The cases that need asking:
+// It always asks. An agent is about to make commits, and where they land is a
+// choice the person starting the run should make rather than discover
+// afterwards — previously a run on an ordinary branch silently committed into
+// whatever was checked out, which is only the right answer sometimes.
+//
+// Three situations make the choice more than a preference, and each gets its
+// own wording rather than a generic prompt:
 //
 //   - The checkout is on a protected branch. Committing agent output straight
 //     onto main is almost never what anyone wants.
@@ -40,13 +62,10 @@ const (
 //   - Per-story mode is on. It switches branches between stories, which inside
 //     the user's own checkout would move their working tree under them while
 //     they are using it.
-func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, othersInRoot bool) *Question {
+func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask askContext) *Question {
 	protected := p.Branch != "" && git.IsProtectedBranch(p.Branch)
-	perStory := cfg.PerStory()
-
-	if !protected && !othersInRoot && !perStory {
-		return nil
-	}
+	perStory := ask.perStory
+	othersInRoot := ask.othersInRoot
 
 	worktreeHint := filepath.Join(".chief", "worktrees", prdName)
 	suggested := "chief/" + prdName
@@ -86,11 +105,12 @@ func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, othe
 			"will overwrite each other."
 		q.Options = []Option{
 			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint, Recommended: true},
+			{ID: optBranch, Label: "Create a branch", Hint: suggested},
 			{ID: optHere, Label: "Run here anyway", Hint: "./", Destructive: true},
 			{ID: optCancel, Label: "Cancel"},
 		}
 
-	default: // protected branch
+	case protected:
 		q.Title = fmt.Sprintf("You are on %s", p.Branch)
 		q.Body = "The agent commits directly to whatever branch is checked out."
 		q.DefaultOption = optBranch
@@ -98,6 +118,21 @@ func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, othe
 			{ID: optBranch, Label: "Create a branch", Hint: suggested, Recommended: true},
 			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint},
 			{ID: optHere, Label: "Continue on " + p.Branch, Destructive: true},
+			{ID: optCancel, Label: "Cancel"},
+		}
+
+	default:
+		// Nothing is unsafe here, but the run is still about to commit
+		// somewhere. Asking makes that a decision instead of a discovery.
+		q.Title = "Where should this run commit?"
+		q.Body = fmt.Sprintf(
+			"The agent commits as it goes. It can work on a new branch, in a "+
+				"separate worktree, or directly on %s.", branchLabel(p.Branch))
+		q.DefaultOption = optBranch
+		q.Options = []Option{
+			{ID: optBranch, Label: "Create a branch", Hint: suggested, Recommended: true},
+			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint},
+			{ID: optHere, Label: "Continue on " + branchLabel(p.Branch)},
 			{ID: optCancel, Label: "Cancel"},
 		}
 	}
@@ -124,7 +159,10 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 		return root, nil
 	}
 
-	q := branchSafetyQuestion(*project, cfg, req.PRD, s.othersRunningIn(root, req.PRD))
+	q := branchSafetyQuestion(*project, cfg, req.PRD, askContext{
+		perStory:     s.stacksPerStory(req.PRD),
+		othersInRoot: s.othersRunningIn(root, req.PRD),
+	})
 	if q == nil {
 		return root, nil
 	}
