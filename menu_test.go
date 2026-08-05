@@ -126,3 +126,54 @@ func TestBothFileItemsShareOneSubmenu(t *testing.T) {
 		}
 	}
 }
+
+// --- Settings ----------------------------------------------------------------
+
+func TestSettingsItemUsesThePlatformAccelerator(t *testing.T) {
+	menu := application.NewMenu()
+	menu.AddSubmenu(fileMenuLabel)
+	item := addSettingsItem(menu, func() {})
+
+	if item.Label() != settingsMenuLabel {
+		t.Errorf("label = %q, want %q", item.Label(), settingsMenuLabel)
+	}
+	want := "Ctrl+,"
+	if runtime.GOOS == "darwin" {
+		want = "Cmd+,"
+	}
+	if got := item.GetAccelerator(); got != want {
+		t.Errorf("accelerator = %q, want %q", got, want)
+	}
+}
+
+func TestSelectingSettingsRunsCommandOnce(t *testing.T) {
+	calls := 0
+	handler := menuCommand(func() { calls++ })
+
+	handler(nil)
+	if calls != 1 {
+		t.Fatalf("selecting the item ran the command %d times, want 1", calls)
+	}
+}
+
+// On a platform whose default menu has no app-named submenu, Settings still has
+// to land somewhere reachable rather than being dropped.
+func TestSettingsFallsBackToTheFileMenu(t *testing.T) {
+	menu := application.NewMenu()
+	menu.AddSubmenu(fileMenuLabel)
+	addSettingsItem(menu, func() {})
+
+	file := menu.FindByLabel(fileMenuLabel)
+	if file == nil || !file.IsSubmenu() {
+		t.Fatal("the File submenu is missing")
+	}
+	var found bool
+	for i := 0; i < 4; i++ {
+		if item := file.GetSubmenu().ItemAt(i); item != nil && item.Label() == settingsMenuLabel {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Settings should fall back into the File menu")
+	}
+}

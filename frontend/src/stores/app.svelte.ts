@@ -5,6 +5,8 @@ import {
   LoopState,
   onEvents,
   onMenuNewPRD,
+  onMenuOpenProject,
+  onMenuSettings,
   onReady,
   type AgentDefaults,
   type AppStatus,
@@ -32,7 +34,9 @@ import { errorMessage } from "./errors";
  * to sequence-number events.
  */
 
-export type View = "stories" | "author" | "settings";
+// Settings is deliberately absent: it is global project configuration, not a
+// per-PRD working context like the others, and it opens as a dialog.
+export type View = "stories" | "author";
 
 /**
  * A control request that has been sent but not yet resolved.
@@ -125,6 +129,9 @@ class AppState {
    * that have nothing to do with the open session.
    */
   authorTarget = $state<{ kind: "new" } | { kind: "edit"; prd: string }>({ kind: "new" });
+
+  /** True while the settings dialog is open. */
+  settingsOpen = $state(false);
 
   /** The PRD a delete confirmation is currently asking about, if any. */
   pendingDelete = $state<string | null>(null);
@@ -277,6 +284,8 @@ let unsubscribe: Array<() => void> = [];
 export async function connect(): Promise<void> {
   unsubscribe.push(onReady(() => void refresh()));
   unsubscribe.push(onMenuNewPRD(requestNewPRD));
+  unsubscribe.push(onMenuOpenProject(() => void pickProject()));
+  unsubscribe.push(onMenuSettings(toggleSettings));
   unsubscribe.push(
     onEvents((events) => {
       for (const ev of events) apply(ev);
@@ -426,6 +435,22 @@ async function reloadPrds(): Promise<void> {
  * awaiting an answer, so the shortcut cannot pull focus off a prompt that is
  * blocking its run.
  */
+/**
+ * Open or close the settings dialog.
+ *
+ * Ignored while a question is waiting, for the same reason New PRD is: a native
+ * accelerator fires regardless of what the webview is showing, and stacking a
+ * dialog over a decision that blocks a run helps nobody.
+ */
+export function toggleSettings(): void {
+  if (app.questions.length > 0) return;
+  app.settingsOpen = !app.settingsOpen;
+}
+
+export function closeSettings(): void {
+  app.settingsOpen = false;
+}
+
 export function requestNewPRD(): void {
   if (app.questions.length > 0) return;
   app.authorTarget = { kind: "new" };

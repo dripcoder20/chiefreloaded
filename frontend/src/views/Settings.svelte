@@ -49,6 +49,7 @@
 </script>
 
 <div class="settings">
+  <div class="content">
   {#if !cfg}
     <p class="muted">No project open.</p>
   {:else}
@@ -239,21 +240,29 @@
       </p>
     {/if}
   {/if}
+  </div>
 </div>
 
 <style>
+  /* The scroll container is full width so its scrollbar sits at the edge of the
+     pane rather than floating in the middle of it. The readable width cap
+     belongs to the content, not to the thing that scrolls. */
   .settings {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+  }
+
+  .content {
     padding: 16px 18px;
     max-width: 640px;
   }
 
-  /* The prompt editor needs room to read as a document rather than a field. */
+  /* The prompt editor needs room to read as a document rather than a field.
+     No negative margin: with the cap off the scroll container there is nothing
+     to bleed past, and the bleed was what produced a horizontal scrollbar. */
   section.wide {
     max-width: none;
-    margin-right: -18px;
-    padding-right: 18px;
   }
 
   .lead {

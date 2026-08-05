@@ -20,6 +20,44 @@ import (
 // scripted. Here it is a pure function returning a Question, and a separate
 // piece of code that acts on the answer.
 
+// ensureRunBranch puts the checkout on the run's branch, creating it only if it
+// is not already there.
+//
+// Resuming a PRD is the ordinary case — the branch from the previous run still
+// exists, and failing with "branch already exists" would make a second run
+// impossible. The worktree path has always adopted an existing worktree; this
+// is the same courtesy for branches.
+func (s *Session) ensureRunBranch(ctx context.Context, root, prdName, branch string) error {
+	if currentBranch(ctx, root) == branch {
+		return nil
+	}
+
+	exists, err := branchExists(ctx, root, branch)
+	if err != nil {
+		return fmt.Errorf("check for branch %s: %w", branch, err)
+	}
+	if exists {
+		if err := gitRun(ctx, root, "checkout", branch); err != nil {
+			return fmt.Errorf("switch to the existing branch %s: %w", branch, err)
+		}
+		s.publish(Event{
+			Kind: EvGit, PRD: prdName,
+			Text: "continuing on an existing branch",
+			Git:  &GitEvent{Op: "branch", Branch: branch, State: "ok"},
+		})
+		return nil
+	}
+
+	if err := git.CreateBranch(root, branch); err != nil {
+		return fmt.Errorf("create branch %s: %w", branch, err)
+	}
+	s.publish(Event{
+		Kind: EvGit, PRD: prdName,
+		Git: &GitEvent{Op: "branch", Branch: branch, State: "ok"},
+	})
+	return nil
+}
+
 // branchLabel names the current branch, falling back to wording that still
 // reads properly on a detached HEAD.
 func branchLabel(branch string) string {
@@ -186,13 +224,9 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 		return root, nil
 
 	case optBranch:
-		if err := git.CreateBranch(root, branch); err != nil {
-			return "", fmt.Errorf("create branch %s: %w", branch, err)
+		if err := s.ensureRunBranch(ctx, root, req.PRD, branch); err != nil {
+			return "", err
 		}
-		s.publish(Event{
-			Kind: EvGit, PRD: req.PRD,
-			Git: &GitEvent{Op: "branch", Branch: branch, State: "ok"},
-		})
 		return root, nil
 
 	default: // worktree

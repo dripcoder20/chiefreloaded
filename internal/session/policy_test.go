@@ -406,3 +406,52 @@ func awaitQuestion(t *testing.T, s *Session) Question {
 	t.Fatal("no question was raised")
 	return Question{}
 }
+
+// Resuming a PRD is the ordinary case: the branch from the previous run still
+// exists, and refusing to start because of that would make a second run
+// impossible. The worktree path has always adopted an existing worktree.
+func TestRunBranchIsAdoptedWhenItAlreadyExists(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.ensureRunBranch(t.Context(), root, "main", "chief/main"); err != nil {
+		t.Fatalf("creating the branch: %v", err)
+	}
+	if got := currentBranch(t.Context(), root); got != "chief/main" {
+		t.Fatalf("on %q, want chief/main", got)
+	}
+
+	// Move away, then ask for it again — as a second run would.
+	if err := gitRun(t.Context(), root, "checkout", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ensureRunBranch(t.Context(), root, "main", "chief/main"); err != nil {
+		t.Fatalf("adopting the existing branch: %v", err)
+	}
+	if got := currentBranch(t.Context(), root); got != "chief/main" {
+		t.Errorf("on %q, want chief/main", got)
+	}
+}
+
+// Already being on the branch is a no-op, not an error.
+func TestRunBranchIsANoOpWhenAlreadyThere(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := s.ensureRunBranch(t.Context(), root, "main", "chief/main"); err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
+	}
+	if got := currentBranch(t.Context(), root); got != "chief/main" {
+		t.Errorf("on %q, want chief/main", got)
+	}
+}

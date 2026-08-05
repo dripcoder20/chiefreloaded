@@ -11,6 +11,8 @@
     pauseRun,
     resumeRun,
     pickProject,
+    toggleSettings,
+    closeSettings,
     startRun,
     stopRun,
   } from "./stores/app.svelte";
@@ -19,7 +21,7 @@
   import Inspector from "./shell/Inspector.svelte";
   import StoryList from "./views/StoryList.svelte";
   import LogPanel from "./views/LogPanel.svelte";
-  import Settings from "./views/Settings.svelte";
+  import SettingsDialog from "./views/SettingsDialog.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
   import UsageBar from "./views/UsageBar.svelte";
 
@@ -114,7 +116,7 @@
         logPanel?.toggle();
         break;
       case ",":
-        app.view = app.view === "settings" ? "stories" : "settings";
+        toggleSettings();
         break;
       case "n":
         app.view = app.view === "author" ? "stories" : "author";
@@ -196,6 +198,10 @@
     </div>
   {/if}
 
+  {#if app.settingsOpen}
+    <SettingsDialog onclose={closeSettings} />
+  {/if}
+
   {#if app.error}
     <div class="error" role="alert">
       {app.error}
@@ -260,12 +266,6 @@
           class:on={app.view === "author"}
           onclick={() => (app.view = "author")}>{authorTabLabel}</button
         >
-        <button
-          role="tab"
-          aria-selected={app.view === "settings"}
-          class:on={app.view === "settings"}
-          onclick={() => (app.view = "settings")}>Settings</button
-        >
       </div>
 
       <div class="pane">
@@ -274,9 +274,7 @@
              itself when it is not the active view. -->
         <AuthorPane active={app.view === "author"} />
 
-        {#if app.view === "settings"}
-          <Settings />
-        {:else if app.view === "stories"}
+        {#if app.view === "stories"}
           {#if !app.project || app.prds.length === 0}
             <div class="blank">
               <p>

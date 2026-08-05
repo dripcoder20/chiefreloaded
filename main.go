@@ -123,6 +123,7 @@ func main() {
 	app.Menu.Set(applicationMenu(MenuCommands{
 		NewPRD:      func() { app.Event.Emit(eventMenuNewPRD) },
 		OpenProject: func() { app.Event.Emit(eventMenuOpenProject) },
+		Settings:    func() { app.Event.Emit(eventMenuSettings) },
 	}))
 
 	sess.SetAuthoringSinks(

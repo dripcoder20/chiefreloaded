@@ -78,6 +78,8 @@ export const EVENT_READY = "loop:ready";
 export const EVENT_AUTHOR = "loop:author";
 export const EVENT_AUTHOR_EXIT = "loop:author:exit";
 export const EVENT_MENU_NEW_PRD = "loop:menu:new-prd";
+export const EVENT_MENU_OPEN_PROJECT = "loop:menu:open-project";
+export const EVENT_MENU_SETTINGS = "loop:menu:settings";
 
 /**
  * True when running inside a real webview rather than a browser preview.
@@ -135,6 +137,18 @@ export function onAuthorExit(handler: (ev: AuthorExit) => void): () => void {
 export function onMenuNewPRD(handler: () => void): () => void {
   if (!isDesktop) return mockOnMenuNewPRD(handler);
   return Events.On(EVENT_MENU_NEW_PRD, () => handler());
+}
+
+/** Fires when File ▸ Open Project… or its ⌘O / Ctrl+O shortcut is used. */
+export function onMenuOpenProject(handler: () => void): () => void {
+  if (!isDesktop) return mockOnMenuNewPRD(() => {});
+  return Events.On(EVENT_MENU_OPEN_PROJECT, () => handler());
+}
+
+/** Fires when the app menu's Settings… item or its ⌘, shortcut is used. */
+export function onMenuSettings(handler: () => void): () => void {
+  if (!isDesktop) return mockOnMenuNewPRD(() => {});
+  return Events.On(EVENT_MENU_SETTINGS, () => handler());
 }
 
 /**
