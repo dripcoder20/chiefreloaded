@@ -178,3 +178,54 @@ describe("persistence-error state", () => {
     expect(usageErrorMessage("   ")).toMatch(/usage history/i);
   });
 });
+
+/**
+ * The Story scope must cover every story a run has spent usage on, not only the
+ * one executing — a run that has moved on would otherwise show nothing about
+ * the work already done, though the totals were recorded all along.
+ */
+describe("per-run story usage", () => {
+  const report = {
+    project: {} as never,
+    runs: {},
+    stories: {},
+    attempts: {},
+    sessions: [
+      {
+        runId: "run_1",
+        prd: "checkout",
+        startedAt: 1,
+        totals: {} as never,
+        stories: [
+          { storyId: "US-001", attempts: 1, totals: { records: 2, totalTokens: 100 } },
+          { storyId: "US-002", attempts: 3, totals: { records: 4, totalTokens: 250 } },
+        ],
+      },
+      { runId: "run_prev", prd: "docs", startedAt: 0, totals: {} as never, stories: [] },
+    ],
+  };
+
+  function storiesFor(runId: string) {
+    return report.sessions.find((s) => s.runId === runId)?.stories ?? [];
+  }
+
+  it("covers every story the run touched, with attempt counts", () => {
+    const stories = storiesFor("run_1");
+    expect(stories.map((s) => s.storyId)).toEqual(["US-001", "US-002"]);
+    expect(stories[1].attempts).toBe(3);
+  });
+
+  it("keeps each story's totals separate", () => {
+    const stories = storiesFor("run_1");
+    expect(stories[0].totals.totalTokens).toBe(100);
+    expect(stories[1].totals.totalTokens).toBe(250);
+  });
+
+  it("does not mix in another run's stories", () => {
+    expect(storiesFor("run_prev")).toHaveLength(0);
+  });
+
+  it("is empty for a run with no recorded usage", () => {
+    expect(storiesFor("run_missing")).toHaveLength(0);
+  });
+});

@@ -89,6 +89,7 @@ import type {
   UsageReport,
   UsageTotals,
   SessionUsage,
+  StoryUsage,
   UsageThresholds,
 } from "./usage";
 import { DEFAULT_THRESHOLDS, usageErrorMessage } from "./usage";
@@ -223,6 +224,20 @@ class AppState {
   /** The project (General) usage grand total across every run. */
   get generalUsage(): UsageTotals | undefined {
     return this.usage?.project;
+  }
+
+  /**
+   * Every story this run has spent usage on, with its own totals and attempt
+   * count — not just the one executing.
+   *
+   * The report already carries this: the session history folds each run's
+   * stories from the same records. Showing only the current story made the
+   * Story scope useless the moment a run moved on.
+   */
+  get currentRunStories(): StoryUsage[] {
+    const run = this.currentRun;
+    if (!run) return [];
+    return this.usage?.sessions?.find((s) => s.runId === run.id)?.stories ?? [];
   }
 
   /** The retained-session history, newest first, for the General scope. */
