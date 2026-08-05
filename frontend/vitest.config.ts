@@ -9,6 +9,15 @@ import { svelteTesting } from "@testing-library/svelte/vite";
 export default defineConfig({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plugins: [svelte() as any, svelteTesting()],
+  resolve: {
+    alias: {
+      // The real runtime arms a timer on import that touches `window`, which
+      // can outlive jsdom and surface as an unhandled error that fails the run
+      // with every test still passing. See the stub for why replacing it costs
+      // no coverage.
+      "@wailsio/runtime": new URL("./src/test/wailsRuntimeStub.ts", import.meta.url).pathname,
+    },
+  },
   test: {
     environment: "jsdom",
     globals: true,

@@ -333,7 +333,11 @@
     gap: 12px;
     height: 38px;
     padding-left: 84px; /* clear of the macOS traffic lights */
-    border-bottom: 1px solid var(--border);
+    /* The divider is drawn inside rather than as a border. Everything here is
+       border-box, so a 1px bottom border would leave a 37px content box and
+       centre the title half a pixel above the traffic lights — which macOS
+       positions against the full 38px inset (InvisibleTitleBarHeight). */
+    box-shadow: inset 0 -1px 0 var(--border);
     --wails-draggable: drag;
   }
 

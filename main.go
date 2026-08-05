@@ -79,6 +79,12 @@ func init() {
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	// Before anything looks for an agent CLI. A GUI launch inherits launchd's
+	// PATH, which contains none of the places these are installed, and the
+	// symptom — empty agent selectors, "claude is not installed" on a machine
+	// where claude works — reads as Loop being broken.
+	session.AdoptUserPath()
+
 	sess, err := session.New(session.Options{Logger: logger})
 	if err != nil {
 		log.Fatal(err)
