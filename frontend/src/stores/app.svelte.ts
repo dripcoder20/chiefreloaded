@@ -175,11 +175,25 @@ class AppState {
   /** Ticks once a second so elapsed timers re-render without one timer each. */
   now = $state(Date.now());
 
-  /** The run attached to the selected PRD, if any. */
+  /**
+   * The latest run of the selected PRD, if any.
+   *
+   * Latest, not first: a PRD accumulates a run for every Start, and the
+   * controls describe the session you are in. Taking the first match left Stop
+   * disabled after start, stop, start — it was reading the stopped run while
+   * the new one was underway. Position cannot be trusted either, since the Go
+   * side holds runs in a map and the list arrives in no particular order, so
+   * the answer comes from when each run started.
+   */
   get currentRun(): RunSnapshot | null {
     const prd = this.selectedPrd;
     if (!prd) return null;
-    return this.runs.find((r) => r.prd === prd) ?? null;
+    return this.runs
+      .filter((r) => r.prd === prd)
+      .reduce<RunSnapshot | null>(
+        (latest, run) => (!latest || (run.startedAt ?? 0) >= (latest.startedAt ?? 0) ? run : latest),
+        null,
+      );
   }
 
   get currentPrd(): PRDSummary | null {

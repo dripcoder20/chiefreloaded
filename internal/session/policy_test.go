@@ -381,7 +381,7 @@ func TestAnswerRejectsAnOptionThatIsNotOffered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = s.Stop(runID) }()
+	defer stopRun(t, s, runID)
 
 	q := awaitQuestion(t, s)
 	if err := s.Answer(q.ID, Answer{OptionID: "definitely-not-an-option"}); err == nil {

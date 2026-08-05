@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -677,6 +678,12 @@ func (s *Session) runsLocked() []RunSnapshot {
 		}
 		out = append(out, *stored)
 	}
+
+	// Oldest first. The runs are held in a map, so without this the order is
+	// whatever Go's iteration produced this time — and a consumer picking "the
+	// run for this PRD" out of an unordered list gets a different answer on
+	// different reads once a PRD has been run more than once.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].StartedAt < out[j].StartedAt })
 	return out
 }
 

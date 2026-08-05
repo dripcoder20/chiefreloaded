@@ -264,3 +264,62 @@ describe("switching PRDs reconstructs state without side effects", () => {
     expect(app.currentTransition).toBeNull();
   });
 });
+
+/**
+ * A PRD accumulates a run per Start. The controls describe the session you are
+ * in, so the run they read has to be the latest one — reading any other means
+ * Stop is greyed out while an agent is running, which is the one moment it has
+ * to work.
+ */
+describe("a PRD with more than one run", () => {
+  function runAt(id: string, state: LoopState, startedAt: number): RunSnapshot {
+    return {
+      id,
+      prd: "checkout",
+      state,
+      attempt: 1,
+      attemptBudget: 8,
+      pendingGitErrors: 0,
+      startedAt,
+    } as RunSnapshot;
+  }
+
+  it("follows the newest run, not the first one listed", () => {
+    app.runs = [
+      runAt("run_1", LoopState.StateStopped, 1_000),
+      runAt("run_2", LoopState.StateRunning, 2_000),
+    ];
+
+    expect(app.currentRun?.id).toBe("run_2");
+    expect(app.canStop).toBe(true);
+    expect(app.canStart).toBe(false);
+  });
+
+  // The Go side holds runs in a map, so the list arrives in no particular
+  // order. Picking by position would make the controls depend on iteration
+  // order — right sometimes, wrong the rest of the time.
+  it("does not depend on the order the runs arrive in", () => {
+    app.runs = [
+      runAt("run_2", LoopState.StateRunning, 2_000),
+      runAt("run_1", LoopState.StateStopped, 1_000),
+    ];
+
+    expect(app.currentRun?.id).toBe("run_2");
+    expect(app.canStop).toBe(true);
+  });
+
+  it("still stops the second run after start, stop, start", () => {
+    app.runs = [runAt("run_1", LoopState.StateRunning, 1_000)];
+    expect(app.canStop).toBe(true);
+
+    app.runs = [runAt("run_1", LoopState.StateStopped, 1_000)];
+    expect(app.canStop).toBe(false);
+    expect(app.canStart).toBe(true);
+
+    app.runs = [
+      runAt("run_1", LoopState.StateStopped, 1_000),
+      runAt("run_2", LoopState.StateRunning, 2_000),
+    ];
+    expect(app.canStop).toBe(true);
+  });
+});

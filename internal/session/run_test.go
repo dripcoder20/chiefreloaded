@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -46,6 +47,24 @@ func startRun(t *testing.T, body string, behaviours ...fakeagent.Behaviour) (*Se
 		t.Fatal(err)
 	}
 	return s, root, runID
+}
+
+// stopRun ends a run and waits for it to unwind, for tests that leave one going.
+//
+// Stop only asks: it kills the agent and returns, while the run's goroutine is
+// still finishing — writing its journal, recording its branch, persisting usage.
+// t.TempDir's cleanup runs the moment the test returns, so without the wait
+// those writes race the directory removal and intermittently recreate part of
+// it, failing the test with "directory not empty" rather than anything to do
+// with what it was testing.
+func stopRun(t *testing.T, s *Session, runID string) {
+	t.Helper()
+	_ = s.Stop(runID)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := s.WaitForRun(ctx, runID); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		return // the run was never live, or is already gone; nothing to wait for
+	}
 }
 
 func waitFor(t *testing.T, s *Session, runID string) RunSnapshot {
@@ -253,7 +272,7 @@ func TestStartRejectsASecondRunForTheSamePRD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = s.Stop(runID) }()
+	defer stopRun(t, s, runID)
 
 	if _, err := s.Start(context.Background(), StartRequest{PRD: "main"}); err == nil {
 		t.Error("a second concurrent run for the same PRD should be refused")
