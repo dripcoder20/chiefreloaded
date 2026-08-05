@@ -51,10 +51,36 @@ func (g *GroupLeader) LoopCommand(ctx context.Context, prompt, workDir string) *
 	}
 	cmd.SysProcAttr.Setpgid = true
 
+	// The kill runs through os/exec's own cancellation rather than from whoever
+	// happens to call Stop.
+	//
+	// Every provider builds its command with exec.CommandContext, and os/exec
+	// invokes Cancel from the goroutine it starts *after* Start returns — so
+	// reading cmd.Process here is ordered against Start's write to it. Reaching
+	// into the command from another goroutine is not: chief's runIteration calls
+	// Start without holding its own mutex, so a concurrent reader racing that
+	// write is a real data race, and one the race detector catches.
+	cmd.Cancel = func() error { return killGroup(cmd) }
+
 	g.mu.Lock()
 	g.current = cmd
 	g.mu.Unlock()
 	return cmd
+}
+
+// killGroup signals the whole process group, falling back to the single process
+// when the group has already gone.
+//
+// The group id equals the leader's pid because of Setpgid above. Callers must
+// already be ordered against cmd.Start.
+func killGroup(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		return cmd.Process.Kill()
+	}
+	return nil
 }
 
 // UsageFormat forwards the wrapped provider's output-format declaration.
@@ -71,6 +97,11 @@ func (g *GroupLeader) UsageFormat() string {
 
 // Kill terminates the current agent and everything it spawned.
 //
+// Prefer cancelling the run's context, which reaches the same kill through
+// cmd.Cancel and is ordered against Start. This exists for the case where there
+// is no context to cancel — application shutdown — and accepts that it reads
+// the command from outside os/exec's synchronisation.
+//
 // Safe to call when nothing is running, and safe to call more than once: a
 // finished process yields ESRCH, which is the outcome we wanted anyway.
 func (g *GroupLeader) Kill() {
@@ -78,14 +109,8 @@ func (g *GroupLeader) Kill() {
 	cmd := g.current
 	g.mu.Unlock()
 
-	if cmd == nil || cmd.Process == nil {
+	if cmd == nil {
 		return
 	}
-
-	// The process group id equals the leader's pid because of Setpgid above.
-	// Negating it signals the group. Fall back to the single process if the
-	// group has already gone.
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-		_ = cmd.Process.Kill()
-	}
+	_ = killGroup(cmd)
 }

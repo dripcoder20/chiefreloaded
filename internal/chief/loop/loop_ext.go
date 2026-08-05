@@ -145,6 +145,25 @@ func (l *Loop) RunStory(ctx context.Context) (StoryRun, error) {
 	}, nil
 }
 
+// StopStory marks the loop stopped without touching the agent process.
+//
+// chief's Stop does both: it sets the flag and kills agentCmd. The kill is the
+// problem. runIteration calls agentCmd.Start() without holding l.mu, and Start
+// writes fields of the exec.Cmd — including Process — so Stop reading
+// agentCmd.Process under l.mu is not ordered against it. The mutex protects the
+// pointer, never the thing it points at, and the race detector reports exactly
+// that whenever a stop lands while an attempt is starting.
+//
+// Killing the process is better done by cancelling the context the command was
+// built with: os/exec runs its cancellation after Start has returned, which is
+// the ordering this cannot get on its own. So the two halves are separated —
+// this sets the flag, and the caller cancels.
+func (l *Loop) StopStory() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.stopped = true
+}
+
 // storyTitle reads the title of the story that is about to run. Best effort: an
 // unreadable PRD is reported by buildPrompt a moment later with a better message.
 func storyTitle(prdPath string) string {

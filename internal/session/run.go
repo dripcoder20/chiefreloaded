@@ -714,12 +714,14 @@ func (s *Session) Stop(runID string) error {
 	r.mu.Unlock()
 
 	if active != nil {
-		active.Stop()
+		active.StopStory()
 	}
-	// Then the process group. Loop.Stop kills only the agent itself; anything it
-	// spawned would keep the output pipe open and leave the attempt blocked in
-	// cmd.Wait, which is exactly the hang a user pressing Stop is trying to end.
-	r.provider.Kill()
+	// Cancelling is what kills the agent, and it takes the whole process group
+	// with it: agentx sets cmd.Cancel, so os/exec runs the group kill from its
+	// own goroutine after Start has returned. Killing the agent alone would not
+	// be enough — anything it spawned holds the output pipe open and leaves the
+	// attempt blocked in cmd.Wait, which is the hang a user pressing Stop is
+	// trying to end — and killing it from here would race the process starting.
 	r.cancel()
 	return nil
 }
