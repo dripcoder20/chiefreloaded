@@ -14,8 +14,10 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -124,14 +126,46 @@ func (s *Session) OpenInApp(ctx context.Context, app LocalApp) error {
 	if !status.Available {
 		return &ErrAppNotInstalled{Name: status.Name}
 	}
+	return launchApp(ctx, status, root, "this project")
+}
 
+// launchApp runs a resolved application against one path.
+//
+// subject names what failed to open in the user's terms — "this project", or a
+// file name — because "code would not open /Users/…/.chief/prds/x/prd.md" makes
+// the reader do the work of recognising their own PRD.
+func launchApp(ctx context.Context, status AppStatus, target, subject string) error {
 	// The path is a discrete argument, never interpolated into a command line.
-	cmd := exec.CommandContext(ctx, status.Path, root)
+	cmd := exec.CommandContext(ctx, status.Path, target)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s is installed but would not open this project. %s",
-			status.Name, firstLine(string(out)))
+		return fmt.Errorf("%s is installed but would not open %s. %s",
+			status.Name, subject, firstLine(string(out)))
 	}
 	return nil
+}
+
+// ErrNoEditor reports that none of the editors Loop knows how to launch is
+// installed. It is a signal to fall back to whatever the operating system
+// considers the default for the file, not a failure worth showing anyone.
+var ErrNoEditor = errors.New("no preferred editor is installed")
+
+// OpenPRDFile opens a PRD's markdown in VS Code.
+//
+// A PRD is a document people edit, and handing markdown to the system default
+// tends to open a previewer or whatever last claimed the extension — rarely the
+// editor the project is being written in. VS Code is preferred when it is
+// installed; ErrNoEditor asks the caller for the system default instead, which
+// is what this used to do unconditionally.
+func (s *Session) OpenPRDFile(ctx context.Context, name string) error {
+	path, err := s.PRDPath(name)
+	if err != nil {
+		return err
+	}
+	editor := resolveApp(AppVSCode)
+	if !editor.Available {
+		return ErrNoEditor
+	}
+	return launchApp(ctx, editor, path, filepath.Base(path))
 }
 
 // ------------------------------------------------------------------ github ----

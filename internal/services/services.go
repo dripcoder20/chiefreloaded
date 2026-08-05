@@ -12,6 +12,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dripcoder/loop/internal/authoring"
@@ -116,8 +117,18 @@ func (p *PRDService) Progress(name string) (map[string][]session.ProgressEntry, 
 	return p.s.Progress(name)
 }
 
-// OpenFile opens a PRD's prd.md in the user's default editor.
+// OpenFile opens a PRD's prd.md, preferring VS Code.
 func (p *PRDService) OpenFile(name string) error {
+	err := p.s.OpenPRDFile(context.Background(), name)
+	if !errors.Is(err, session.ErrNoEditor) {
+		return err
+	}
+	return p.openWithSystemDefault(name)
+}
+
+// openWithSystemDefault hands the file to the operating system. Reached only
+// when no editor Loop knows how to launch is installed.
+func (p *PRDService) openWithSystemDefault(name string) error {
 	path, err := p.s.PRDPath(name)
 	if err != nil {
 		return err
