@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from "../stores/errors";
   import { api, type Prompt } from "../platform";
 
   /**
@@ -29,7 +30,7 @@
       body = p.body;
       dirty = false;
     } catch (err) {
-      error = String(err);
+      error = errorMessage(err);
     }
   }
 
@@ -47,7 +48,7 @@
       saved = true;
       setTimeout(() => (saved = false), 1500);
     } catch (err) {
-      error = String(err);
+      error = errorMessage(err);
     } finally {
       saving = false;
     }

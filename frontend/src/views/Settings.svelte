@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Settings } from "../platform";
   import { app } from "../stores/app.svelte";
+  import { errorMessage } from "../stores/errors";
   import PromptEditor from "./PromptEditor.svelte";
 
   let promptKind = $state<"new" | "edit">("new");
@@ -32,7 +33,7 @@
       saved = true;
       setTimeout(() => (saved = false), 1500);
     } catch (err) {
-      app.error = String(err);
+      app.error = errorMessage(err);
     } finally {
       saving = false;
     }

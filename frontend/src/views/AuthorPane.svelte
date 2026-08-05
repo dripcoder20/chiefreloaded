@@ -11,6 +11,7 @@
     savePrdWorkflow,
     selectPrd,
   } from "../stores/app.svelte";
+  import { errorMessage } from "../stores/errors";
   import { resolveTerminalKey } from "../lib/terminalInput";
 
   /**
@@ -277,7 +278,7 @@
       term?.focus();
     } catch (err) {
       sessionId = null;
-      error = String(err);
+      error = errorMessage(err);
     } finally {
       starting = false;
     }

@@ -251,7 +251,7 @@ func (s *Session) ResolveImplementationAgent(prd string) (string, error) {
 	}
 	if !s.agentIsAvailable(workflow.ImplementationAgent) {
 		return "", fmt.Errorf(
-			"%q is configured to be implemented by %s, which is not installed. Choose another agent before starting.",
+			"%s is set to be implemented by %s, which is not installed. Pick another agent to start the run.",
 			prd, workflow.ImplementationAgent)
 	}
 	return workflow.ImplementationAgent, nil

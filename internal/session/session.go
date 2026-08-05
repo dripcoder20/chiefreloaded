@@ -345,10 +345,10 @@ func (s *Session) PRDPath(name string) (string, error) {
 		// answer to "open this file".
 		info, err := os.Stat(p.Path)
 		if err != nil {
-			return "", fmt.Errorf("the markdown file for %q cannot be read (%s): %w", name, p.Path, err)
+			return "", fmt.Errorf("%s has no readable markdown file at %s. It may have been moved or deleted.", name, p.Path)
 		}
 		if info.IsDir() {
-			return "", fmt.Errorf("the markdown file for %q is a directory (%s)", name, p.Path)
+			return "", fmt.Errorf("%s's markdown path is a directory (%s), not a file.", name, p.Path)
 		}
 		return p.Path, nil
 	}
@@ -393,13 +393,13 @@ func (s *Session) refuseDeleteWhileBusy(name string) error {
 	for _, snap := range s.runs {
 		if snap.PRD == name && s.isRunActiveLocked(snap.ID) {
 			return fmt.Errorf(
-				"%q is being implemented. Stop the run before deleting it.", name)
+				"%s is being implemented right now. Stop the run, then delete it.", name)
 		}
 	}
 	for _, spec := range s.authorSpecs {
 		if spec.PRD == name {
 			return fmt.Errorf(
-				"%q has an authoring session open. Close that session before deleting it.", name)
+				"%s has an authoring session open. Close that session, then delete it.", name)
 		}
 	}
 	return nil

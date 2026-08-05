@@ -75,7 +75,7 @@ func (s *Session) trackerFor(dest IssueDestination) (tracker.Client, error) {
 	case IssueLinear:
 		return tracker.Linear{}, nil
 	default:
-		return nil, fmt.Errorf("no issue destination is selected")
+		return nil, fmt.Errorf("No issue tracker is selected. Choose Linear or GitHub Issues first.")
 	}
 }
 
@@ -114,7 +114,8 @@ func (s *Session) PublishIssues(ctx context.Context, prdName string) (PublishRep
 		return PublishReport{}, err
 	}
 	if workflow.IssueDestination == IssueNone {
-		return PublishReport{}, fmt.Errorf("%q is not configured to publish issues", prdName)
+		return PublishReport{}, fmt.Errorf(
+			"%s is not set to publish issues. Choose Linear or GitHub Issues for it first.", prdName)
 	}
 
 	detail, err := s.PRD(prdName)
@@ -231,7 +232,8 @@ func (s *Session) writeIssueReference(prdName, storyID string, ref IssueRef) err
 
 	updated, ok := insertIssueReference(string(raw), storyID, ref)
 	if !ok {
-		return fmt.Errorf("story %s was not found in %s", storyID, prdName)
+		return fmt.Errorf(
+			"%s has no story called %s, so its issue link could not be written back.", prdName, storyID)
 	}
 	return writeFileAtomic(path, []byte(updated))
 }

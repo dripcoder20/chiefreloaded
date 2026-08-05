@@ -21,6 +21,7 @@ import {
   type RunSnapshot,
 } from "../platform";
 import { ingest } from "./logs.svelte";
+import { errorMessage } from "./errors";
 
 /**
  * Application state.
@@ -82,6 +83,7 @@ export {
   UNAVAILABLE_LABEL,
 } from "./sessionMeta";
 export type { MetaValue, StoryMeta, SessionMetaRun } from "./sessionMeta";
+
 
 import type {
   UsageReport,
@@ -298,7 +300,7 @@ export async function refresh(): Promise<void> {
       app.config = await api.project.getConfig();
     }
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -378,7 +380,7 @@ async function reloadRuns(): Promise<void> {
   try {
     app.runs = await api.run.list();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -435,7 +437,7 @@ export async function openPrdFile(name: string): Promise<void> {
   try {
     await api.prd.openFile(name);
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -470,7 +472,7 @@ export async function deletePrd(name: string): Promise<void> {
     }
     await reloadPrds();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
     // Re-read the authoritative list so a partially applied or refused delete
     // cannot leave the rail disagreeing with what is on disk.
     await reloadPrds();
@@ -490,7 +492,7 @@ export async function openOnGitHub(): Promise<void> {
   try {
     await api.project.openOnGitHub();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     app.launching = false;
   }
@@ -508,7 +510,7 @@ export async function openInApp(target: string): Promise<void> {
   try {
     await api.project.openInApp(target);
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     app.launching = false;
   }
@@ -544,7 +546,7 @@ export async function savePrdWorkflow(name: string, workflow: PRDWorkflow): Prom
     await api.prd.saveWorkflow(name, workflow);
     return true;
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
     return false;
   }
 }
@@ -567,7 +569,7 @@ export async function publishIssues(name: string): Promise<PublishReport | null>
     }
     return report;
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
     return null;
   }
 }
@@ -591,7 +593,7 @@ export async function selectPrd(name: string): Promise<void> {
     const first = app.detail.stories?.find((s) => s.status !== "done");
     app.selectedStory = first?.id ?? app.detail.stories?.[0]?.id ?? null;
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -604,7 +606,7 @@ export async function pickProject(): Promise<void> {
     app.selectedPrd = null;
     await refresh();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -615,7 +617,7 @@ export async function openProject(path: string): Promise<void> {
     app.selectedPrd = null;
     await refresh();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -645,7 +647,7 @@ export async function startRun(agent?: string): Promise<void> {
     await api.run.start({ prd, provider: agent || undefined } as never);
     await reloadRuns();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     clearPending(prd);
   }
@@ -690,7 +692,7 @@ async function transition(
     await reloadRuns();
   } catch (err) {
     await reloadRuns();
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     clearPending(prd);
   }
@@ -721,7 +723,7 @@ async function guard(fn: () => Promise<unknown>): Promise<void> {
     await fn();
     await reloadRuns();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
