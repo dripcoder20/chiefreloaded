@@ -451,3 +451,56 @@ func TestInsertIssueReferenceLeavesOtherStoriesAlone(t *testing.T) {
 		t.Error("US-001's content must be untouched")
 	}
 }
+
+// Workflow settings are chosen as a PRD is created, which is before the
+// authoring agent has written prd.md. Requiring the document there would fail
+// at the one moment the choices are actually made, losing them silently.
+func TestPRDWorkflowSavesBeforeTheDocumentExists(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	// No prd.md anywhere: the PRD is being authored right now.
+	want := PRDWorkflow{
+		ImplementationAgent: "codex",
+		StackPerStory:       true,
+		IssueDestination:    IssueGitHub,
+	}
+	if err := s.SavePRDWorkflow("exclude-offline-donations", want); err != nil {
+		t.Fatalf("saving a new PRD's workflow must not require its document: %v", err)
+	}
+
+	got, err := s.PRDWorkflowFor("exclude-offline-donations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("workflow = %+v, want %+v", got, want)
+	}
+
+	// It lands where the PRD will be, so the agent's prd.md joins it.
+	sidecar := filepath.Join(root, ".chief", "prds", "exclude-offline-donations", "loop.json")
+	if _, err := os.Stat(sidecar); err != nil {
+		t.Errorf("expected the sidecar at %s: %v", sidecar, err)
+	}
+}
+
+// The name reaches the filesystem, so it must not be able to steer the write
+// out of the PRD directory.
+func TestPRDWorkflowRejectsAnUnsafeName(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"../escape", "a/b", "", "..'"} {
+		if err := s.SavePRDWorkflow(name, PRDWorkflow{}); err == nil {
+			t.Errorf("saving under %q should be refused", name)
+		}
+	}
+}

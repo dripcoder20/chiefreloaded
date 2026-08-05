@@ -262,9 +262,11 @@
       } as never);
       sessionId = id;
 
-      // The workflow choices are saved with the PRD as soon as it has a
-      // directory, so the later implementation run reads them back. Saving
-      // them starts nothing — no branch, no pull request, no tracker write.
+      // Saved now, while the choices are in front of the user, rather than
+      // after the agent writes prd.md — a session that is abandoned or closed
+      // would otherwise lose them. The sidecar does not need the document to
+      // exist. Saving starts nothing: no branch, no pull request, no tracker
+      // write.
       if (kind === "new") {
         await savePrdWorkflow(name, {
           implementationAgent,

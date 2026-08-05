@@ -67,12 +67,42 @@ type IssueRef struct {
 }
 
 // prdMetaPath resolves a PRD's sidecar path.
+//
+// It deliberately does not require prd.md to exist. The workflow settings are
+// chosen when a PRD is created, which is before the authoring agent has written
+// anything — resolving through PRDPath there would fail, and the user's choices
+// would be lost at the one moment they were actually made.
+//
+// An existing PRD is located through PRDPath so the legacy .chief/prd.md layout
+// keeps its sidecar beside it. Otherwise the standard location is used.
 func (s *Session) prdMetaPath(name string) (string, error) {
-	prdPath, err := s.PRDPath(name)
+	root, err := s.requireProject()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(prdPath), prdMetaFile), nil
+	if err := validPRDName(name); err != nil {
+		return "", err
+	}
+	if prdPath, err := s.PRDPath(name); err == nil {
+		return filepath.Join(filepath.Dir(prdPath), prdMetaFile), nil
+	}
+	return filepath.Join(root, chiefDir, prdsDir, name, prdMetaFile), nil
+}
+
+// validPRDName rejects anything that is not a plain name, so a caller cannot
+// steer the sidecar out of the PRD directory with "..".
+func validPRDName(name string) error {
+	if name == "" {
+		return fmt.Errorf("the PRD needs a name")
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return fmt.Errorf("PRD name %q: use only letters, digits, - and _", name)
+		}
+	}
+	return nil
 }
 
 // loadPRDMeta reads a PRD's sidecar. A missing file yields the zero value and
@@ -111,7 +141,12 @@ func savePRDMeta(path string, env prdMetaEnvelope) error {
 		return err
 	}
 
+	// The directory may not exist yet: workflow settings are chosen as a PRD is
+	// created, and nothing has written to it at that point.
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	tmp, err := os.CreateTemp(dir, ".loop-*.tmp")
 	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
