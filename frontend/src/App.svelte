@@ -27,6 +27,8 @@
   import SettingsDialog from "./views/SettingsDialog.svelte";
   import NewPrdDialog from "./views/NewPrdDialog.svelte";
   import PrdSettings from "./views/PrdSettings.svelte";
+  import Summary from "./views/Summary.svelte";
+  import PrLink from "./views/PrLink.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
   import UsageBar from "./views/UsageBar.svelte";
 
@@ -90,6 +92,20 @@
   });
 
   const pauseLabel = $derived(transitioning === "pausing" ? "Pausing…" : "Pause");
+
+  /**
+   * The branch the work is going to, in order of how directly it answers that.
+   *
+   * A live run knows exactly, because it put itself there. A PRD that has run
+   * before recorded the branch it used. Failing both, the repository's own
+   * branch is where a run started now would land.
+   */
+  const branch = $derived(run?.branch || app.detail?.branch || app.project?.branch || "");
+  const branchTitle = $derived.by(() => {
+    if (run?.branch) return "The running loop is committing here";
+    if (app.detail?.branch) return `${app.detail.name} last ran on this branch`;
+    return "The repository's current branch";
+  });
 
   /**
    * The agent this run will use. Seeded from the PRD's saved choice — resolved
@@ -258,6 +274,17 @@
       <div class="toolbar">
         <span class="badge {runState}">{runState}</span>
 
+        <!-- Which branch the work is landing on, and its pull request if it has
+             one. A run switches branch as its first act, so the branch shown is
+             the run's while one exists and the repository's otherwise —
+             answering "where is my work going" rather than "where was I". -->
+        {#if branch}
+          <span class="branch mono" title={branchTitle}>⎇ {branch}</span>
+        {/if}
+        {#if app.detail?.pr}
+          <PrLink pr={app.detail.pr} now={app.now} />
+        {/if}
+
         {#if run}
           <span class="tnum meta">attempt {run.attempt}/{run.attemptBudget}</span>
           {#if elapsed}<span class="tnum meta">{elapsed}</span>{/if}
@@ -307,6 +334,12 @@
         >
         <button
           role="tab"
+          aria-selected={app.view === "summary"}
+          class:on={app.view === "summary"}
+          onclick={() => (app.view = "summary")}>Summary</button
+        >
+        <button
+          role="tab"
           aria-selected={app.view === "prd-settings"}
           class:on={app.view === "prd-settings"}
           onclick={() => (app.view = "prd-settings")}>PRD Settings</button
@@ -327,7 +360,9 @@
              itself when it is not the active view. -->
         <AuthorPane active={app.view === "author"} />
 
-        {#if app.view === "prd-settings"}
+        {#if app.view === "summary"}
+          <Summary />
+        {:else if app.view === "prd-settings"}
           <PrdSettings />
         {:else if app.view === "stories"}
           {#if !app.project || app.prds.length === 0}
@@ -502,6 +537,21 @@
   .git-warn {
     color: var(--warn);
     font-size: 12px;
+  }
+
+  /* Capped: branch templates produce long names, and the toolbar's job is to
+     say which branch, not to render every character of it. */
+  .branch {
+    max-width: 30ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-3);
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
   }
 
   /* Kept low-weight: it sits next to Start but must not compete with it. */

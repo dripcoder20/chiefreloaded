@@ -37,7 +37,7 @@ import { errorMessage } from "./errors";
 
 // Settings is deliberately absent: it is global project configuration, not a
 // per-PRD working context like the others, and it opens as a dialog.
-export type View = "stories" | "prd-settings" | "author";
+export type View = "stories" | "summary" | "prd-settings" | "author";
 
 /**
  * A control request that has been sent but not yet resolved.
@@ -389,6 +389,15 @@ function apply(ev: LoopEvent): void {
       void reloadPrds();
       break;
 
+    case EventKind.EvGit:
+      // A branch was cut or a pull request opened, so what the interface knows
+      // about both is now out of date. Reloading the PRDs picks up the branch
+      // the engine just recorded; the pull request is confirmed separately
+      // because that one costs a call to gh.
+      void reloadPrds();
+      if (ev.prd && ev.git?.prNumber) void refreshPullRequests(ev.prd);
+      break;
+
     case EventKind.EvAgentText:
       app.activity = truncate(ev.text ?? "", 120);
       break;
@@ -677,6 +686,33 @@ export async function selectPrd(name: string): Promise<void> {
     app.selectedStory = first?.id ?? app.detail.stories?.[0]?.id ?? null;
   } catch (err) {
     app.error = errorMessage(err);
+  }
+  void refreshPullRequests(name);
+}
+
+/**
+ * Re-read pull request state from GitHub for a PRD, in the background.
+ *
+ * Deliberately not awaited by its callers. It shells out to gh, which takes the
+ * better part of a second, and the cached state is already on screen by then —
+ * blocking selection on a network round trip to sharpen something already
+ * rendered would be the wrong trade every time.
+ *
+ * Failure is silent by design. A project with no GitHub remote, no gh, or no
+ * network is a normal project; the branch names are still right and the reason
+ * is carried in the result rather than raised as an error.
+ */
+export async function refreshPullRequests(name: string): Promise<void> {
+  try {
+    const set = await api.prd.refreshPullRequests(name);
+    // Nothing was confirmed, so nothing on screen should change.
+    if (!set?.checkedAt) return;
+    // Re-read the detail rather than patching it: the Go side has already
+    // written the fresh refs into the sidecar, and one path that assembles a
+    // PRD is easier to trust than two.
+    if (app.selectedPrd === name) app.detail = await api.prd.get(name);
+  } catch {
+    // See above: an unreachable GitHub is not an error worth showing.
   }
 }
 

@@ -739,6 +739,11 @@ export const mockApi = {
       mockWorkflow = w as typeof mockWorkflow;
     },
     issues: async () => ({}) as never,
+    // The browser build has no gh and no repository, so the cached shape is the
+    // honest answer: branches with no confirmed pull request behind them.
+    pullRequests: async () => ({ byBranch: {} }) as never,
+    refreshPullRequests: async () =>
+      ({ byBranch: {}, unavailable: "no GitHub repository in the browser build" }) as never,
     publish: async (name: string) =>
       ({
         prd: name,

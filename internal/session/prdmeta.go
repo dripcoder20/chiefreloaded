@@ -109,10 +109,20 @@ func (s *Session) recordPullRequest(prd, branch string, ref PRRef) error {
 }
 
 // updatePRDMeta applies a change to a PRD's sidecar as a read-modify-write.
+//
+// A PRD whose directory has gone is not written to. savePRDMeta creates the
+// directory it needs — which is right when a PRD is being created, and wrong
+// here: these writes come from a run, which outlives the PRD being deleted
+// under it by however long the agent takes to notice. Recreating the directory
+// would resurrect a PRD the user deleted, as an empty husk holding nothing but
+// a branch name.
 func (s *Session) updatePRDMeta(prd string, change func(*prdMetaEnvelope)) error {
 	path, err := s.prdMetaPath(prd)
 	if err != nil {
 		return err
+	}
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+		return nil
 	}
 	env, err := loadPRDMeta(path)
 	if err != nil {
