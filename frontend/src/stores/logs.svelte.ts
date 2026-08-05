@@ -16,6 +16,12 @@ import type { LoopEvent } from "../platform";
  *     exactly the backpressure we want, for free.
  *  3. Buffers are per-PRD and survive switching between them. chief clears its
  *     log on switch, which with parallel runs is simply data loss.
+ *
+ * Reads are scoped to a story. A PRD's log is the concatenation of every story
+ * it has run plus the run-level chatter between them, which for a long PRD is
+ * tens of thousands of lines with no way to answer "what did US-004 actually
+ * do". Filtering happens on read and is memoised per frame, so the buffer stays
+ * one flat append-only array — the shape the ring depends on.
  */
 
 /** How many events to keep per PRD before trimming the oldest. */
@@ -102,10 +108,51 @@ function flush(): void {
   version++;
 }
 
-/** Events for a PRD, oldest first. */
-export function logFor(prd: string): LoopEvent[] {
+/**
+ * Story IDs seen for a PRD, in the order they first appeared.
+ *
+ * Derived from the buffer rather than the PRD document so it reflects what
+ * actually ran: a story with no output never appears, and a story whose events
+ * have aged out of the ring stops being offered.
+ */
+export function storiesFor(prd: string): string[] {
+  version;
+  const seen: string[] = [];
+  const known = new Set<string>();
+  for (const ev of buffers.get(prd) ?? []) {
+    const id = ev.storyId;
+    if (!id || known.has(id)) continue;
+    known.add(id);
+    seen.push(id);
+  }
+  return seen;
+}
+
+/** The last filtered view, so repeated reads within one frame cost nothing. */
+let viewKey = "";
+let viewVersion = -1;
+let viewValue: LoopEvent[] = [];
+
+/**
+ * Events for a PRD, oldest first, optionally narrowed to one story.
+ *
+ * A fresh array is returned whenever the buffer has changed. That is load
+ * bearing: `$derived` compares by reference, so handing back the same
+ * mutated-in-place array would leave every reader frozen at whatever it first
+ * rendered. The memo keeps that from costing a filter pass per read.
+ *
+ * Run-level events carry no story, so they appear only in the unfiltered view.
+ */
+export function logFor(prd: string, storyId?: string): LoopEvent[] {
   version; // establish the dependency
-  return buffers.get(prd) ?? [];
+  const key = `${prd}\u0000${storyId ?? ""}`;
+  if (viewKey === key && viewVersion === version) return viewValue;
+
+  const all = buffers.get(prd) ?? [];
+  viewKey = key;
+  viewVersion = version;
+  viewValue = storyId ? all.filter((ev) => ev.storyId === storyId) : all.slice();
+  return viewValue;
 }
 
 /** How many events the backend discarded for this PRD. */
@@ -127,6 +174,10 @@ export function highestSeq(): number {
 }
 
 export function clear(prd?: string): void {
+  // Drop the memo too, or a cleared PRD keeps serving its old view.
+  viewKey = "";
+  viewVersion = -1;
+  viewValue = [];
   if (prd === undefined) {
     buffers.clear();
     lastSeq.clear();

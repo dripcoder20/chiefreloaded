@@ -1,7 +1,7 @@
 // Application menu wiring.
 //
-// The File ▸ New PRD item is the desktop-native twin of the in-window "New PRD"
-// tab. It does not itself begin authoring: selecting it (or pressing its
+// The File ▸ New PRD and File ▸ Open Project… items are the desktop-native twins
+// of the in-window "New PRD" tab and project picker. It does not itself begin authoring: selecting it (or pressing its
 // accelerator) asks the webview to reveal and focus the New PRD tab, which is
 // where a session is actually started. Routing through one event rather than
 // starting a session in Go keeps a single entry point, so the same command
@@ -15,20 +15,49 @@ const (
 	// eventMenuNewPRD asks the webview to open and focus the New PRD tab.
 	eventMenuNewPRD = "loop:menu:new-prd"
 
+	// eventMenuOpenProject asks the webview to run the project picker. It is
+	// routed through the frontend rather than opening the native dialog here so
+	// that opening a project is one code path, and so the handler can decline
+	// while a modal question is waiting.
+	eventMenuOpenProject = "loop:menu:open-project"
+
 	// newPRDAccelerator resolves to ⌘N on macOS and Ctrl+N on Windows and Linux
 	// — "CmdOrCtrl" is Command on darwin and Control elsewhere.
 	newPRDAccelerator = "CmdOrCtrl+n"
 
-	newPRDMenuLabel = "New PRD"
-	fileMenuLabel   = "File"
+	// openProjectAccelerator is ⌘O / Ctrl+O, the platform convention for "open".
+	openProjectAccelerator = "CmdOrCtrl+o"
+
+	newPRDMenuLabel      = "New PRD"
+	openProjectMenuLabel = "Open Project…"
+	fileMenuLabel        = "File"
 )
 
-// applicationMenu builds the platform's default application menu and adds a
-// File ▸ New PRD item that runs onNewPRD when selected or shortcut-triggered.
-func applicationMenu(onNewPRD func()) *application.Menu {
+// MenuCommands are the callbacks the application menu invokes. A struct rather
+// than positional parameters so adding an item later does not change every
+// call site.
+type MenuCommands struct {
+	NewPRD      func()
+	OpenProject func()
+}
+
+// applicationMenu builds the platform's default application menu and adds the
+// File items that run cmds when selected or shortcut-triggered.
+func applicationMenu(cmds MenuCommands) *application.Menu {
 	menu := application.DefaultApplicationMenu()
-	addNewPRDItem(menu, onNewPRD)
+	addNewPRDItem(menu, cmds.NewPRD)
+	addOpenProjectItem(menu, cmds.OpenProject)
 	return menu
+}
+
+// addOpenProjectItem inserts the Open Project… item into the File submenu and
+// returns it. Like addNewPRDItem it is the seam the tests exercise, so it must
+// not depend on a running application.
+func addOpenProjectItem(menu *application.Menu, onOpenProject func()) *application.MenuItem {
+	item := fileSubmenu(menu).Add(openProjectMenuLabel)
+	item.SetAccelerator(openProjectAccelerator)
+	item.OnClick(menuCommand(onOpenProject))
+	return item
 }
 
 // addNewPRDItem inserts the New PRD item into the menu's File submenu and
@@ -37,7 +66,7 @@ func applicationMenu(onNewPRD func()) *application.Menu {
 func addNewPRDItem(menu *application.Menu, onNewPRD func()) *application.MenuItem {
 	item := fileSubmenu(menu).Add(newPRDMenuLabel)
 	item.SetAccelerator(newPRDAccelerator)
-	item.OnClick(onNewPRDSelected(onNewPRD))
+	item.OnClick(menuCommand(onNewPRD))
 	return item
 }
 
@@ -51,7 +80,7 @@ func fileSubmenu(menu *application.Menu) *application.Menu {
 	return menu.AddSubmenu(fileMenuLabel)
 }
 
-// onNewPRDSelected adapts the plain command callback to a menu click handler.
-func onNewPRDSelected(onNewPRD func()) func(*application.Context) {
-	return func(*application.Context) { onNewPRD() }
+// menuCommand adapts a plain command callback to a menu click handler.
+func menuCommand(run func()) func(*application.Context) {
+	return func(*application.Context) { run() }
 }

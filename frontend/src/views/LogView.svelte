@@ -3,7 +3,10 @@
   import { droppedFor, logFor } from "../stores/logs.svelte";
   import { EventKind, type LoopEvent } from "../platform";
 
-  const events = $derived(logFor(app.selectedPrd ?? ""));
+  /** Which story to show, or "" for every event. Owned by the panel header. */
+  let { storyId = "" }: { storyId?: string } = $props();
+
+  const events = $derived(logFor(app.selectedPrd ?? "", storyId || undefined));
   const missing = $derived(droppedFor(app.selectedPrd ?? ""));
 
   let viewport = $state<HTMLDivElement | null>(null);
@@ -107,7 +110,11 @@
   {/if}
 
   {#if events.length === 0}
-    <p class="empty">No output yet. Press <kbd>s</kbd> to start the loop.</p>
+    {#if storyId}
+      <p class="empty">No output for {storyId} yet.</p>
+    {:else}
+      <p class="empty">No output yet. Press <kbd>s</kbd> to start the loop.</p>
+    {/if}
   {/if}
 
   {#each events as ev (ev.seq)}

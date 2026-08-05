@@ -1,7 +1,7 @@
 <script lang="ts">
   import LogView from "./LogView.svelte";
   import { app } from "../stores/app.svelte";
-  import { droppedFor, logFor } from "../stores/logs.svelte";
+  import { droppedFor, logFor, storiesFor } from "../stores/logs.svelte";
 
   /**
    * The log as a panel under the story list rather than a view you switch to.
@@ -49,8 +49,41 @@
     }
   });
 
-  const count = $derived(logFor(app.selectedPrd ?? "").length);
-  const missing = $derived(droppedFor(app.selectedPrd ?? ""));
+  const prd = $derived(app.selectedPrd ?? "");
+  const stories = $derived(storiesFor(prd));
+  const missing = $derived(droppedFor(prd));
+
+  /**
+   * Which story's output to show. "" is every event, including the run-level
+   * chatter between stories, which carries no story of its own.
+   *
+   * It follows the running story on its own until the user picks one, because
+   * the story you want to watch is almost always the one executing. Choosing
+   * explicitly pins it — being yanked to another story mid-read is the same
+   * irritation as being scrolled to the bottom mid-read.
+   */
+  let selected = $state("");
+  let pinnedStory = $state(false);
+
+  $effect(() => {
+    const active = app.currentRun?.storyId;
+    if (pinnedStory || !active || selected === active) return;
+    selected = active;
+  });
+
+  // A story that has aged out of the ring can no longer be shown; fall back to
+  // everything rather than rendering an empty panel with no explanation.
+  $effect(() => {
+    if (selected && !stories.includes(selected)) selected = "";
+  });
+
+  function chooseStory(event: Event): void {
+    selected = (event.currentTarget as HTMLSelectElement).value;
+    // Choosing "All" hands following back to the run.
+    pinnedStory = selected !== "";
+  }
+
+  const count = $derived(logFor(prd, selected || undefined).length);
 
   /** Exposed so the keyboard map can toggle the panel with `t`. */
   export function toggle(): void {
@@ -101,6 +134,21 @@
       Log
     </button>
 
+    {#if !collapsed && stories.length > 0}
+      <!-- A PRD's log is every story it has run concatenated; without this the
+           only question you can answer is "what happened", never "what did this
+           story do". -->
+      <label class="scope">
+        <span class="sr-only">Show log for</span>
+        <select value={selected} onchange={chooseStory} aria-label="Show log for">
+          <option value="">All stories</option>
+          {#each stories as id (id)}
+            <option value={id}>{id}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
+
     {#if count > 0}
       <span class="count tnum">{count.toLocaleString()}</span>
     {/if}
@@ -116,12 +164,37 @@
 
   {#if !collapsed}
     <div class="body">
-      <LogView />
+      <LogView storyId={selected} />
     </div>
   {/if}
 </section>
 
 <style>
+  .scope select {
+    padding: 1px 4px;
+    background: var(--bg-raised);
+    color: var(--fg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    font: inherit;
+    font-size: 11px;
+  }
+  .scope select:hover {
+    color: var(--fg-1);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .panel {
     position: relative;
     display: flex;
