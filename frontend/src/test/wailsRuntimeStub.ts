@@ -18,6 +18,28 @@ export const Events = {
 };
 
 export const Call = { ByID: async (): Promise<unknown> => undefined };
+
+/**
+ * The generated bindings build their decoders at module scope with these, so
+ * they must exist merely to import a service — before any test decides whether
+ * to mock it. Each returns an identity decoder: nothing here decodes real
+ * traffic, since the platform boundary is mocked wherever behaviour matters.
+ */
+const identity = <T,>(v: T): T => v;
+
+export const Create = {
+  Any: identity,
+  Map: () => identity,
+  Array: () => identity,
+  Struct: () => identity,
+  Nullable: () => identity,
+  ByteSlice: identity,
+};
+
+/** Bindings type their return values with this; tests never await a real one. */
+export class CancellablePromise<T> extends Promise<T> {
+  cancel(): void {}
+}
 export const Window = {};
 export const Browser = { OpenURL: (): void => {}, OpenFile: (): void => {} };
 export const Dialogs = {};

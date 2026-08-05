@@ -97,7 +97,10 @@
    * different PRD in the rail must not silently re-point a live editing session
    * at another document.
    */
-  const editing = $derived(app.authorTarget.kind === "edit" ? app.authorTarget.prd : null);
+  const target = $derived(app.authorTarget);
+  const editing = $derived(target?.kind === "edit" ? target.prd : null);
+  /** The PRD this conversation belongs to, whether it is new or being revised. */
+  const conversationPrd = $derived(target?.prd ?? null);
 
   /**
    * Choosing Edit PRD in the rail is the decision — the pane does not ask again.
@@ -106,10 +109,10 @@
    */
   let startedFor = $state<string | null>(null);
   $effect(() => {
-    const target = editing;
-    if (!target || startedFor === target || sessionId) return;
-    startedFor = target;
-    void start("edit", target);
+    const prd = conversationPrd;
+    if (!prd || startedFor === prd || sessionId) return;
+    startedFor = prd;
+    void start(target?.kind ?? "new", prd);
   });
 
   function makeTerminal(): Terminal {
@@ -255,26 +258,12 @@
 
       const id = await api.author.start({
         kind,
-        prd: kind === "edit" ? (prd ?? editing ?? "") : name,
-        context,
-        agent: authoringAgent,
+        prd: prd ?? conversationPrd ?? "",
         cols: term?.cols ?? 120,
         rows: term?.rows ?? 32,
       } as never);
       sessionId = id;
 
-      // Saved now, while the choices are in front of the user, rather than
-      // after the agent writes prd.md — a session that is abandoned or closed
-      // would otherwise lose them. The sidecar does not need the document to
-      // exist. Saving starts nothing: no branch, no pull request, no tracker
-      // write.
-      if (kind === "new") {
-        await savePrdWorkflow(name, {
-          implementationAgent,
-          stackPerStory,
-          issueDestination,
-        } as never);
-      }
       term?.focus();
     } catch (err) {
       sessionId = null;
@@ -318,126 +307,25 @@
 </script>
 
 <div class="author" class:hidden={!active}>
-  {#if !sessionId && editing}
-    <!-- The edit session starts on its own; this is only reached when starting
+  {#if !sessionId && conversationPrd}
+    <!-- The conversation starts on its own; this is only reached when starting
          it failed, so it explains what went wrong and offers a retry. -->
     <div class="setup">
-      <h2>Edit {editing}</h2>
+      <h2>{editing ? `Edit ${editing}` : conversationPrd}</h2>
       {#if error}
         <p class="err">{error}</p>
         <div class="actions">
-          <button class="primary" disabled={starting} onclick={() => start("edit", editing)}>
+          <button
+            class="primary"
+            disabled={starting}
+            onclick={() => start(target?.kind ?? "new", conversationPrd)}
+          >
             {starting ? "Starting…" : "Try again"}
           </button>
         </div>
       {:else}
-        <p class="hint">Starting the editing session…</p>
+        <p class="hint">Starting the conversation…</p>
       {/if}
-    </div>
-  {:else if !sessionId}
-    <div class="setup">
-      <h2>Create a PRD</h2>
-      <p class="hint">
-        Runs your agent interactively. It uses the prompt from Settings, so anything you
-        put there — including your own slash commands — applies to every new PRD.
-      </p>
-
-      <label>
-        <span>Name</span>
-        <input
-          type="text"
-          bind:value={name}
-          placeholder="checkout"
-          spellcheck="false"
-          onkeydown={(e) => e.key === "Enter" && nameValid && start("new")}
-        />
-      </label>
-      {#if name && !nameValid}
-        <p class="err">Letters, digits, hyphen and underscore only — it becomes a directory and a branch name.</p>
-      {/if}
-
-      <label class="tall">
-        <span>What are you building?</span>
-        <textarea
-          bind:value={context}
-          rows="4"
-          placeholder="Optional. Leave blank and the agent will ask."
-        ></textarea>
-      </label>
-
-      <!-- Options are grouped by phase, so which of them writes the PRD and
-           which of them implements it stays visually explicit. -->
-      <h3>Agents</h3>
-
-      <label>
-        <span>Authoring agent</span>
-        <select bind:value={authoringAgent} aria-describedby="authoring-help">
-          {#if isMissing(authoringAgent)}
-            <option value={authoringAgent}>{authoringAgent} (not installed)</option>
-          {/if}
-          {#each installedAgents as agent (agent)}
-            <option value={agent}>{agent}</option>
-          {/each}
-        </select>
-      </label>
-      <p class="help" id="authoring-help">Writes this PRD with you, now.</p>
-      {#if isMissing(authoringAgent)}
-        <p class="err">{authoringAgent} is not installed. Choose another agent to start.</p>
-      {/if}
-
-      <label>
-        <span>Implementation agent</span>
-        <select bind:value={implementationAgent} aria-describedby="implementation-help">
-          {#if isMissing(implementationAgent)}
-            <option value={implementationAgent}>{implementationAgent} (not installed)</option>
-          {/if}
-          {#each installedAgents as agent (agent)}
-            <option value={agent}>{agent}</option>
-          {/each}
-        </select>
-      </label>
-      <p class="help" id="implementation-help">
-        Executes the user stories later, when you start implementation. You can change it
-        then.
-      </p>
-
-      <h3>Implementation workflow</h3>
-
-      <label class="check">
-        <input type="checkbox" bind:checked={stackPerStory} />
-        <span class="check-label">Stack a pull request per user story</span>
-      </label>
-      <p class="help">
-        Saved with the PRD and applied when implementation starts. Choosing it creates no
-        branches or pull requests now.
-      </p>
-
-      <label>
-        <span>Publish issues to</span>
-        <select bind:value={issueDestination}>
-          <option value="">Do not publish</option>
-          {#each app.destinations as dest (dest.destination)}
-            <option value={dest.destination} disabled={!dest.available}>
-              {dest.name}{dest.available ? "" : " — unavailable"}
-            </option>
-          {/each}
-        </select>
-      </label>
-      {#each app.destinations.filter((d) => !d.available && d.reason) as dest (dest.destination)}
-        <p class="help">{dest.name}: {dest.reason}</p>
-      {/each}
-
-      <div class="actions">
-        <button
-          class="primary"
-          disabled={!nameValid || starting || isMissing(authoringAgent)}
-          onclick={() => start("new")}
-        >
-          {starting ? "Starting…" : "Create"}
-        </button>
-      </div>
-
-      {#if error}<p class="err">{error}</p>{/if}
     </div>
   {/if}
 
@@ -494,9 +382,10 @@
     {:else if running}
       <div class="running-bar">
         <span class="dot"></span>
-        <!-- Naming the PRD here is what distinguishes two editing sessions from
-             one another; the tab title alone says only "Edit PRD". -->
-        <span>{editing ? `Editing ${editing}` : "Session live"} — type in the terminal.</span>
+        <span>
+          {editing ? `Editing ${editing}` : `Writing ${conversationPrd}`} — type in the
+          terminal.
+        </span>
         <button onclick={stop}>Stop</button>
       </div>
     {/if}
@@ -521,45 +410,6 @@
     max-width: 620px;
   }
 
-  h3 {
-    margin: 18px 0 8px;
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--fg-3);
-  }
-
-  /* Helper text sits under its control, aligned with the field rather than the
-     label, so the phase each agent belongs to reads at a glance. */
-  .help {
-    margin: -4px 0 10px 162px;
-    font-size: 11.5px;
-    color: var(--fg-3);
-    max-width: 52ch;
-  }
-
-  select {
-    flex: 1;
-    padding: 5px 8px;
-    background: var(--bg-raised);
-    color: var(--fg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    font: inherit;
-  }
-
-  label.check {
-    align-items: center;
-  }
-  label.check input {
-    flex: none;
-    margin-left: 150px;
-  }
-  .check-label {
-    width: auto;
-  }
-
   h2 {
     margin: 0 0 4px;
     font-size: 15px;
@@ -572,36 +422,6 @@
     color: var(--fg-3);
     font-size: 12px;
     max-width: 60ch;
-  }
-
-  label {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
-  }
-  label.tall {
-    align-items: flex-start;
-  }
-  label span {
-    width: 150px;
-    flex: none;
-    color: var(--fg-2);
-  }
-
-  input,
-  textarea {
-    flex: 1;
-    padding: 5px 8px;
-    background: var(--bg-raised);
-    color: var(--fg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    font: inherit;
-    resize: vertical;
-  }
-  input {
-    font-family: var(--font-mono);
   }
 
   .actions {

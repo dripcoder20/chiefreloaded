@@ -12,6 +12,7 @@ import {
   type AppStatus,
   type DestinationStatus,
   type Environment,
+  type NewPRDRequest,
   type PRDWorkflow,
   type PublishReport,
   type Settings,
@@ -36,7 +37,7 @@ import { errorMessage } from "./errors";
 
 // Settings is deliberately absent: it is global project configuration, not a
 // per-PRD working context like the others, and it opens as a dialog.
-export type View = "stories" | "author";
+export type View = "stories" | "prd-settings" | "author";
 
 /**
  * A control request that has been sent but not yet resolved.
@@ -128,10 +129,22 @@ class AppState {
    * against — independent of `selectedPrd`, which the rail changes for reasons
    * that have nothing to do with the open session.
    */
-  authorTarget = $state<{ kind: "new" } | { kind: "edit"; prd: string }>({ kind: "new" });
+  authorTarget = $state<{ kind: "new" | "edit"; prd: string } | null>(null);
 
   /** True while the settings dialog is open. */
   settingsOpen = $state(false);
+
+  /** True while the New PRD dialog is open. */
+  newPrdOpen = $state(false);
+
+  /**
+   * PRDs with a live authoring conversation, by name.
+   *
+   * The conversation is a per-PRD surface, so the tab strip shows it only for
+   * the PRD it belongs to. Keyed by name rather than held as one flag because
+   * more than one PRD can be mid-conversation.
+   */
+  authoring = $state<Record<string, boolean>>({});
 
   /** The PRD a delete confirmation is currently asking about, if any. */
   pendingDelete = $state<string | null>(null);
@@ -453,8 +466,33 @@ export function closeSettings(): void {
 
 export function requestNewPRD(): void {
   if (app.questions.length > 0) return;
-  app.authorTarget = { kind: "new" };
-  app.view = "author";
+  app.newPrdOpen = true;
+}
+
+export function closeNewPRD(): void {
+  app.newPrdOpen = false;
+}
+
+/**
+ * Create a PRD and hand it straight to an authoring conversation.
+ *
+ * The PRD exists on disk before the agent is asked for anything, so it is in
+ * the sidebar immediately and survives a conversation that is abandoned. The
+ * caller then starts the session against a PRD that is already real.
+ */
+export async function createPrd(req: NewPRDRequest): Promise<string | null> {
+  try {
+    const created = await api.prd.create(req);
+    app.newPrdOpen = false;
+    await reloadPrds();
+    await selectPrd(created.name);
+    app.authorTarget = { kind: "new", prd: created.name };
+    app.view = "author";
+    return created.name;
+  } catch (err) {
+    app.error = errorMessage(err);
+    return null;
+  }
 }
 
 /**
@@ -469,7 +507,7 @@ export async function editPrd(name: string): Promise<void> {
   try {
     await api.prd.get(name);
   } catch (err) {
-    app.error = `${name} cannot be opened for editing: ${err}`;
+    app.error = `${name} cannot be opened for editing. ${errorMessage(err)}`;
     return;
   }
   await selectPrd(name);

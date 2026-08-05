@@ -11,6 +11,8 @@
     pauseRun,
     resumeRun,
     pickProject,
+    editPrd,
+    closeNewPRD,
     toggleSettings,
     closeSettings,
     startRun,
@@ -22,6 +24,8 @@
   import StoryList from "./views/StoryList.svelte";
   import LogPanel from "./views/LogPanel.svelte";
   import SettingsDialog from "./views/SettingsDialog.svelte";
+  import NewPrdDialog from "./views/NewPrdDialog.svelte";
+  import PrdSettings from "./views/PrdSettings.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
   import UsageBar from "./views/UsageBar.svelte";
 
@@ -49,7 +53,21 @@
   );
   // A conversational editing session is never labelled "New PRD" — the tab title
   // follows what the pane is actually for.
-  const authorTabLabel = $derived(app.authorTarget.kind === "edit" ? "Edit PRD" : "New PRD");
+  const authorTabLabel = $derived(app.authorTarget?.kind === "edit" ? "Edit PRD" : "Writing");
+
+  /**
+   * The conversation belongs to a PRD, so its tab shows only for that one.
+   * Switching PRDs in the sidebar leaves the session running — it is just no
+   * longer the thing on screen.
+   */
+  const conversationOpen = $derived(
+    app.authorTarget !== null && app.authorTarget.prd === app.selectedPrd,
+  );
+
+  // A tab that vanishes must not leave the pane showing nothing.
+  $effect(() => {
+    if (app.view === "author" && !conversationOpen) app.view = "stories";
+  });
 
   const pauseLabel = $derived(transitioning === "pausing" ? "Pausing…" : "Pause");
 
@@ -202,6 +220,10 @@
     <SettingsDialog onclose={closeSettings} />
   {/if}
 
+  {#if app.newPrdOpen}
+    <NewPrdDialog onclose={closeNewPRD} />
+  {/if}
+
   {#if app.error}
     <div class="error" role="alert">
       {app.error}
@@ -253,19 +275,36 @@
         <button onclick={stopRun} disabled={!app.canStop}>{stopLabel}</button>
       </div>
 
+      <!-- Everything here is about the PRD selected in the sidebar. The
+           conversation appears only while that PRD has one; a tab for a session
+           that does not exist is a tab you can only be disappointed by. -->
       <div class="tabs" role="tablist">
         <button
           role="tab"
           aria-selected={app.view === "stories"}
           class:on={app.view === "stories"}
-          onclick={() => (app.view = "stories")}>Stories</button
+          onclick={() => (app.view = "stories")}>User Stories</button
         >
         <button
           role="tab"
-          aria-selected={app.view === "author"}
-          class:on={app.view === "author"}
-          onclick={() => (app.view = "author")}>{authorTabLabel}</button
+          aria-selected={app.view === "prd-settings"}
+          class:on={app.view === "prd-settings"}
+          onclick={() => (app.view = "prd-settings")}>PRD Settings</button
         >
+        {#if conversationOpen}
+          <button
+            role="tab"
+            aria-selected={app.view === "author"}
+            class:on={app.view === "author"}
+            onclick={() => (app.view = "author")}>{authorTabLabel}</button
+          >
+        {/if}
+
+        <span class="tab-spacer"></span>
+
+        {#if app.selectedPrd}
+          <button class="update" onclick={() => editPrd(app.selectedPrd!)}>Update PRD</button>
+        {/if}
       </div>
 
       <div class="pane">
@@ -274,7 +313,9 @@
              itself when it is not the active view. -->
         <AuthorPane active={app.view === "author"} />
 
-        {#if app.view === "stories"}
+        {#if app.view === "prd-settings"}
+          <PrdSettings />
+        {:else if app.view === "stories"}
           {#if !app.project || app.prds.length === 0}
             <div class="blank">
               <p>
@@ -472,6 +513,28 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  .tab-spacer {
+    flex: 1;
+  }
+
+  /* Right-aligned in the strip: it acts on the PRD the tabs are about, but it
+     is an action rather than another view of it. */
+  .update {
+    margin: 0 8px;
+    padding: 2px 10px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--fg-2);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: default;
+  }
+  .update:hover {
+    color: var(--fg-1);
+    border-color: var(--fg-3);
   }
 
   .spacer {

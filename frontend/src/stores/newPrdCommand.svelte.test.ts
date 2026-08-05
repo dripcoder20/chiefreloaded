@@ -37,16 +37,16 @@ beforeEach(() => {
 });
 
 describe("New PRD command (File ▸ New PRD / ⌘N)", () => {
-  it("opens and focuses the New PRD tab", () => {
+  it("opens the New PRD dialog", () => {
     requestNewPRD();
-    expect(app.view).toBe("author");
+    expect(app.newPrdOpen).toBe(true);
   });
 
-  it("is idempotent — repeat delivery keeps the tab and starts no session", () => {
+  it("is idempotent — repeat delivery keeps the dialog open and starts no session", () => {
     requestNewPRD();
     requestNewPRD();
     requestNewPRD();
-    expect(app.view).toBe("author");
+    expect(app.newPrdOpen).toBe(true);
     expect(backend.authorStart).not.toHaveBeenCalled();
     expect(backend.runStart).not.toHaveBeenCalled();
   });

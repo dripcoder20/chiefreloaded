@@ -73,7 +73,7 @@ vi.mock("../platform", () => ({
 const store = vi.hoisted(() => ({
   app: {
     selectedPrd: null as string | null,
-    authorTarget: { kind: "new" } as { kind: "new" } | { kind: "edit"; prd: string },
+    authorTarget: null as { kind: "new" | "edit"; prd: string } | null,
     environment: {
       agents: [
         { name: "claude", available: true },
@@ -102,15 +102,15 @@ vi.mock("../stores/app.svelte", () => store);
 
 const SESSION_ID = "sess-1";
 
-/** Render the pane and drive it through the "Create" flow into a live session. */
-async function startSession() {
+/**
+ * Render the pane for a PRD that already exists, which is now the only way a
+ * conversation begins: the PRD is created first and the pane picks it up.
+ */
+async function startSession(kind: "new" | "edit" = "new", prd = "checkout") {
   bridge.start.mockResolvedValue(SESSION_ID);
+  store.app.authorTarget = { kind, prd };
+
   const view = render(AuthorPane, { props: { active: true } });
-
-  const name = view.getByPlaceholderText("checkout");
-  await fireEvent.input(name, { target: { value: "checkout" } });
-  await fireEvent.click(view.getByRole("button", { name: "Create" }));
-
   await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(1));
   return view;
 }
@@ -131,7 +131,7 @@ async function endSession(outcome: Record<string, unknown>, prd = "checkout") {
 
 beforeEach(() => {
   store.app.selectedPrd = null;
-  store.app.authorTarget = { kind: "new" };
+  store.app.authorTarget = null;
   store.app.publishing = null;
   store.savePrdWorkflow.mockReset().mockResolvedValue(true);
   store.publishIssues.mockReset().mockResolvedValue(null);
@@ -292,12 +292,15 @@ describe("edit sessions", () => {
     await waitFor(() => expect(view.getByText(/Editing docs-site/)).toBeTruthy());
   });
 
-  it("does not offer the create form while editing", async () => {
+  // The PRD is created before its conversation, so the pane never asks for a
+  // name — that decision has already been made in the dialog.
+  it("never asks for a name", async () => {
     bridge.start.mockResolvedValue(SESSION_ID);
     store.app.authorTarget = { kind: "edit", prd: "docs-site" };
 
     const view = render(AuthorPane, { props: { active: true } });
     await waitFor(() => expect(bridge.start).toHaveBeenCalled());
+    expect(view.queryByPlaceholderText("checkout")).toBeNull();
     expect(view.queryByRole("button", { name: "Create" })).toBeNull();
   });
 
@@ -326,127 +329,9 @@ describe("edit sessions", () => {
   });
 
   it("starts nothing on its own when the target is a new PRD", async () => {
-    store.app.authorTarget = { kind: "new" };
+    store.app.authorTarget = null;
     render(AuthorPane, { props: { active: true } });
     await waitFor(() => {});
     expect(bridge.start).not.toHaveBeenCalled();
-  });
-});
-
-/**
- * US-007 / US-008 — the New PRD tab's per-phase agent selectors and workflow
- * options: independent choices, resolved defaults shown rather than a blank,
- * only installed agents offered, and unavailable trackers disabled in place
- * with the missing configuration explained.
- */
-describe("creation options", () => {
-  /**
-   * The select inside the label carrying this text. Queried from the document
-   * rather than through RenderResult, whose generic instantiation does not line
-   * up between the Svelte and DOM testing-library versions here.
-   */
-  function labelled(text: string): HTMLSelectElement {
-    const label = [...document.querySelectorAll("label")].find((l) =>
-      l.textContent?.includes(text),
-    );
-    return label!.querySelector("select")!;
-  }
-
-  /** The pane has exactly one checkbox: the stacked-PR option. */
-  function stackCheckbox(): HTMLInputElement {
-    return document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  }
-
-  it("offers separate authoring and implementation agent selectors", () => {
-    const view = render(AuthorPane, { props: { active: true } });
-    expect(labelled("Authoring agent")).toBeTruthy();
-    expect(labelled("Implementation agent")).toBeTruthy();
-  });
-
-  // A blank meaning "whatever is configured" tells the user nothing; the
-  // resolved default is shown instead.
-  it("initialises each selector from its own resolved default", async () => {
-    const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled("Authoring agent").value).toBe("claude"));
-    expect(labelled("Implementation agent").value).toBe("codex");
-  });
-
-  it("changes one selector without moving the other", async () => {
-    const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled("Authoring agent").value).toBe("claude"));
-
-    await fireEvent.change(labelled("Authoring agent"), { target: { value: "codex" } });
-    expect(labelled("Authoring agent").value).toBe("codex");
-    expect(labelled("Implementation agent").value).toBe("codex");
-
-    await fireEvent.change(labelled("Implementation agent"), {
-      target: { value: "claude" },
-    });
-    expect(labelled("Implementation agent").value).toBe("claude");
-    expect(labelled("Authoring agent").value).toBe("codex");
-  });
-
-  it("lists only installed agents", () => {
-    const view = render(AuthorPane, { props: { active: true } });
-    const options = [...labelled("Authoring agent").options].map((o) => o.value);
-    expect(options).toEqual(["claude", "codex"]);
-  });
-
-  it("starts the authoring session with the chosen authoring agent", async () => {
-    bridge.start.mockResolvedValue(SESSION_ID);
-    const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled("Authoring agent").value).toBe("claude"));
-
-    await fireEvent.change(labelled("Authoring agent"), { target: { value: "codex" } });
-    await fireEvent.input(view.getByPlaceholderText("checkout"), {
-      target: { value: "checkout" },
-    });
-    await fireEvent.click(view.getByRole("button", { name: "Create" }));
-
-    await waitFor(() => expect(bridge.start).toHaveBeenCalled());
-    expect(bridge.start.mock.calls[0][0]).toMatchObject({ agent: "codex" });
-  });
-
-  // Stacking and the issue destination configure the later run; saving them
-  // must not create a branch, a pull request or an issue.
-  it("saves the implementation agent and workflow options with the PRD", async () => {
-    bridge.start.mockResolvedValue(SESSION_ID);
-    const view = render(AuthorPane, { props: { active: true } });
-    await waitFor(() => expect(labelled("Implementation agent").value).toBe("codex"));
-
-    await fireEvent.click(stackCheckbox());
-    await fireEvent.change(labelled("Publish issues to"), {
-      target: { value: "github" },
-    });
-    await fireEvent.input(view.getByPlaceholderText("checkout"), {
-      target: { value: "checkout" },
-    });
-    await fireEvent.click(view.getByRole("button", { name: "Create" }));
-
-    await waitFor(() => expect(store.savePrdWorkflow).toHaveBeenCalled());
-    expect(store.savePrdWorkflow).toHaveBeenCalledWith("checkout", {
-      implementationAgent: "codex",
-      stackPerStory: true,
-      issueDestination: "github",
-    });
-  });
-
-  it("defaults to not stacking and not publishing", () => {
-    const view = render(AuthorPane, { props: { active: true } });
-    const stack = stackCheckbox();
-    expect(stack.checked).toBe(false);
-    expect(labelled("Publish issues to").value).toBe("");
-  });
-
-  // An unconfigured tracker is disabled in place with its setup explained,
-  // rather than being silently absent.
-  it("disables an unconfigured destination and explains what is missing", () => {
-    const view = render(AuthorPane, { props: { active: true } });
-    const options = [...labelled("Publish issues to").options];
-
-    const linear = options.find((o) => o.value === "linear")!;
-    expect(linear.disabled).toBe(true);
-    expect(options.find((o) => o.value === "github")!.disabled).toBe(false);
-    expect(view.getByText(/LINEAR_API_KEY/)).toBeTruthy();
   });
 });

@@ -32,7 +32,7 @@ beforeEach(() => {
   app.view = "stories";
   app.questions = [];
   app.selectedPrd = null;
-  app.authorTarget = { kind: "new" };
+  app.authorTarget = null;
   backend.get.mockResolvedValue(DETAIL);
 });
 
@@ -59,7 +59,7 @@ describe("editPrd", () => {
 
     expect(app.error).toContain("ghost");
     expect(app.view).toBe("stories");
-    expect(app.authorTarget).toEqual({ kind: "new" });
+    expect(app.authorTarget).toBeNull();
     expect(backend.authorStart).not.toHaveBeenCalled();
   });
 
@@ -70,9 +70,13 @@ describe("editPrd", () => {
     expect(backend.authorStart).not.toHaveBeenCalled();
   });
 
-  it("returns the tab to New PRD when a new PRD is requested", async () => {
+  // Requesting a new PRD opens the dialog; it does not re-point the
+  // conversation, which still belongs to whatever PRD it was started for.
+  it("opens the New PRD dialog without disturbing an open conversation", async () => {
     await editPrd("checkout");
     requestNewPRD();
-    expect(app.authorTarget).toEqual({ kind: "new" });
+
+    expect(app.newPrdOpen).toBe(true);
+    expect(app.authorTarget).toEqual({ kind: "edit", prd: "checkout" });
   });
 });
