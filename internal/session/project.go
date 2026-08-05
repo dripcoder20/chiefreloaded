@@ -140,6 +140,19 @@ func summarisePRD(root, name, path string, legacy bool) PRDSummary {
 		}
 	}
 
+	// The document itself says whether the work is finished, and it says so
+	// across restarts and on a project this session has never run. Reporting
+	// idle for a PRD whose every story passes made a completed project look
+	// untouched the moment it was reopened.
+	//
+	// Only completion is inferred. An in-progress flag is not evidence that
+	// anything is running — the engine writes it before the agent starts and a
+	// crashed run leaves it behind — so a live run remains the only thing that
+	// can report running.
+	if s.Total > 0 && s.Completed == s.Total {
+		s.State = StateComplete
+	}
+
 	// A worktree is only reported when it actually exists on disk. chief's
 	// convention is .chief/worktrees/<prd>, but the directory is created lazily,
 	// so its absence is normal rather than an error.

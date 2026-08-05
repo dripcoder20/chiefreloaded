@@ -25,8 +25,8 @@ const store = vi.hoisted(() => ({
       { app: "codex", name: "Codex", available: false },
     ],
     prds: [
-      { name: "checkout", completed: 1, total: 3 },
-      { name: "docs-site", completed: 2, total: 6 },
+      { name: "checkout", completed: 1, total: 3, state: "idle" },
+      { name: "docs-site", completed: 2, total: 6, state: "idle" },
     ],
     runs: [] as Array<{ prd: string; state: string }>,
     selectedPrd: "checkout" as string | null,
@@ -331,5 +331,49 @@ describe("repository launchers", () => {
       document.querySelector("[aria-label='Open the repository in an AI IDE']"),
     ).toBeNull();
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+/**
+ * Reopening a project full of finished PRDs used to show every one of them as
+ * untouched: the rail only ever looked at this session's runs, and a fresh
+ * session has none.
+ */
+describe("PRD state without a run", () => {
+  function dotFor(name: string): HTMLElement {
+    const row = document.querySelector<HTMLElement>(`[aria-label="Actions for ${name}"]`)!
+      .closest(".row")!;
+    return row.querySelector<HTMLElement>(".dot")!;
+  }
+
+  it("shows a completed PRD as complete", () => {
+    store.app.prds = [
+      { name: "checkout", completed: 7, total: 7, state: "complete" },
+    ] as never;
+    store.app.runs = [];
+    render(PrdRail);
+
+    expect(dotFor("checkout").className).toContain("complete");
+  });
+
+  it("leaves an unfinished PRD idle", () => {
+    store.app.prds = [
+      { name: "checkout", completed: 0, total: 13, state: "idle" },
+    ] as never;
+    store.app.runs = [];
+    render(PrdRail);
+
+    expect(dotFor("checkout").className).toContain("idle");
+  });
+
+  // A run in this session is the only thing that can report running.
+  it("prefers a live run over the PRD's own state", () => {
+    store.app.prds = [
+      { name: "checkout", completed: 7, total: 7, state: "complete" },
+    ] as never;
+    store.app.runs = [{ prd: "checkout", state: "running" }];
+    render(PrdRail);
+
+    expect(dotFor("checkout").className).toContain("running");
   });
 });
