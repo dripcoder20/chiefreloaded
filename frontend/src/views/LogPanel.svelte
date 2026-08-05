@@ -92,10 +92,19 @@
 
   function startDrag(e: PointerEvent): void {
     if (collapsed) return;
-    dragging = true;
+
+    // Read the element and pointer now, while the event is still dispatching.
+    // The DOM resets currentTarget to null once dispatch ends, so reaching for
+    // it from a listener that runs later throws — and a throw on the way out of
+    // a drag leaves the pointer captured, which routes every subsequent pointer
+    // event to this handle and presents as a stuck cursor.
+    const handle = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
     const startY = e.clientY;
     const startHeight = height;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+
+    dragging = true;
+    handle.setPointerCapture(pointerId);
 
     const move = (ev: PointerEvent) => {
       // Dragging up grows the panel, which is the direction the handle moves.
@@ -105,15 +114,27 @@
       const max = Math.max(MIN, window.innerHeight - 260);
       height = Math.min(max, Math.max(MIN, next));
     };
-    const up = (ev: PointerEvent) => {
+
+    // A drag ends by release or by cancellation — a system gesture, or the
+    // window losing the pointer. Both have to clean up, or the listeners and
+    // the capture outlive the drag.
+    const stop = () => {
       dragging = false;
-      (e.currentTarget as HTMLElement).releasePointerCapture(ev.pointerId);
+      // Detach first: whatever happens below, the drag must not keep running.
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {
+        // Already released — the pointer left the window, or the element went
+        // away. Nothing to undo.
+      }
     };
 
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
   }
 </script>
 
