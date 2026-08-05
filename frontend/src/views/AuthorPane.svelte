@@ -434,11 +434,6 @@
         >
           {starting ? "Starting…" : "Create"}
         </button>
-        {#if app.selectedPrd}
-          <button disabled={starting} onclick={() => start("edit")}>
-            Edit {app.selectedPrd}
-          </button>
-        {/if}
       </div>
 
       {#if error}<p class="err">{error}</p>{/if}
