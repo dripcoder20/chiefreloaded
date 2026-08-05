@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dripcoder/loop/internal/authoring"
+	"github.com/dripcoder/loop/internal/fakeagent"
 )
 
 // A PRD used to exist only once the agent had written one, so abandoning the
@@ -160,5 +163,46 @@ func TestCreatePRDRejectsAnUnsafeName(t *testing.T) {
 		if _, err := s.CreatePRD(t.Context(), NewPRDRequest{Name: name}); err == nil {
 			t.Errorf("creating %q should be refused", name)
 		}
+	}
+}
+
+// The bug this guards against: creating a PRD writes a stub, and an authoring
+// session that refused to start because its own stub existed could never begin.
+func TestAuthoringStartsOnAFreshlyCreatedPRD(t *testing.T) {
+	s := newTestSessionWith(t, fakeagent.New())
+	root := t.TempDir()
+	gitInit(t, root)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.CreatePRD(t.Context(), NewPRDRequest{Name: "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := s.StartAuthoring(authoring.Spec{Kind: authoring.KindNew, PRD: "test"})
+	if err != nil {
+		t.Fatalf("a session for a newly created PRD must start: %v", err)
+	}
+	t.Cleanup(func() { _ = s.StopAuthoring(id) })
+}
+
+// A PRD with written work is still protected: the new-PRD prompt would write
+// over stories somebody already has.
+func TestAuthoringRefusesToOverwriteWrittenStories(t *testing.T) {
+	s := newTestSessionWith(t, fakeagent.New())
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "checkout", oneStoryPRD)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.StartAuthoring(authoring.Spec{Kind: authoring.KindNew, PRD: "checkout"})
+	if err == nil {
+		t.Fatal("expected a PRD with stories to be protected")
+	}
+	if !strings.Contains(err.Error(), "Update PRD") {
+		t.Errorf("error %q should point at the way forward", err)
 	}
 }
