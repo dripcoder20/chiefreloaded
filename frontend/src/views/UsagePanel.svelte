@@ -86,6 +86,7 @@
   }
 
   const activeGroups = $derived(groupsOf(active.totals));
+  const runStories = $derived(app.currentRunStories);
 
   // ------------------------------------------------------ history browsing --
 
@@ -412,6 +413,8 @@
     <div class="body" role="tabpanel" aria-label={`${active.label} usage`}>
       {#if scope === "general"}
         {@render generalScope()}
+      {:else if scope === "story"}
+        {@render storyScope()}
       {:else}
         {@render scopeGroups(activeGroups, active.label)}
       {/if}
@@ -469,6 +472,39 @@
     <p class="empty">No usage recorded for this {label.toLowerCase()} yet.</p>
   {:else}
     {@render groupBlocks(groups)}
+  {/if}
+{/snippet}
+
+<!--
+  The Story scope: every story this run has spent usage on, not only the one
+  executing. A run that has moved on would otherwise show nothing useful about
+  the work already done, even though the totals were recorded all along.
+-->
+{#snippet storyScope()}
+  {#if runStories.length === 0}
+    <p class="empty">No usage recorded for a story in this run yet.</p>
+  {:else}
+    <ul class="run-stories">
+      {#each runStories as st (st.storyId)}
+        {@const current = st.storyId === run?.storyId}
+        <li class:current>
+          <div class="story-head">
+            <span class="story-id">{st.storyId}</span>
+            {#if current}<span class="now">running</span>{/if}
+            <span class="attempts">
+              {st.attempts}
+              {st.attempts === 1 ? "attempt" : "attempts"}
+            </span>
+            <span class="spacer"></span>
+            <span class="tnum" aria-label={totalTokensLabel(st.totals)}>
+              {totalTokensText(st.totals)}
+            </span>
+            <span class="tnum cost">{costText(st.totals)}</span>
+          </div>
+          {@render scopeGroups(groupsOf(st.totals), "story")}
+        </li>
+      {/each}
+    </ul>
   {/if}
 {/snippet}
 
@@ -547,6 +583,48 @@
 {/snippet}
 
 <style>
+  .run-stories {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .run-stories > li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .run-stories > li:last-child {
+    border-bottom: 0;
+  }
+
+  .story-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .story-head .spacer {
+    flex: 1;
+  }
+  .story-head .attempts {
+    font-size: 11.5px;
+    color: var(--fg-3);
+  }
+  .story-head .cost {
+    min-width: 62px;
+    text-align: right;
+    color: var(--fg-3);
+  }
+
+  /* The running story is called out by a label, not by colour alone. */
+  .now {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-raised);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-size: 10.5px;
+  }
+
   .scrim {
     position: fixed;
     inset: 0;

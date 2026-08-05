@@ -56,6 +56,94 @@ type prdMetaEnvelope struct {
 	// the idempotency key: a retry after a partial failure consults this rather
 	// than creating a second issue for a story that already has one.
 	Issues map[string]IssueRef `json:"issues,omitempty"`
+	// Git records what runs have actually done with branches and pull requests.
+	Git PRDGitState `json:"git,omitempty"`
+}
+
+// PRDGitState is what a PRD's runs have put into git.
+//
+// Branch names look derivable — branchName is a pure function of the template,
+// the PRD and the story — but only until the template changes or the user edits
+// the suggested branch at the safety question. What a run actually used is the
+// only thing that stays true, so it is recorded rather than recomputed.
+type PRDGitState struct {
+	// Branch is the PRD's own run branch, in per-PRD mode.
+	Branch string `json:"branch,omitempty"`
+	// Stories maps a story ID to the branch its commit landed on.
+	Stories map[string]string `json:"stories,omitempty"`
+	// PullRequests caches the last pull request seen for a branch, keyed by
+	// branch name. GitHub remains the source of truth; this exists so the links
+	// still render when gh is missing, unauthenticated or offline, and every
+	// entry carries when it was last confirmed so a stale state is never
+	// presented as a live one.
+	PullRequests map[string]PRRef `json:"pullRequests,omitempty"`
+}
+
+// recordBranch stores the branch a run used, for the PRD as a whole when storyID
+// is empty, or for one story.
+//
+// Written as it happens rather than at the end of a run: a run that is stopped
+// or crashes has still created the branch, and a UI that cannot name it leaves
+// the user hunting through `git branch` for their own work.
+func (s *Session) recordBranch(prd, storyID, branch string) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		if storyID == "" {
+			env.Git.Branch = branch
+			return
+		}
+		if env.Git.Stories == nil {
+			env.Git.Stories = map[string]string{}
+		}
+		env.Git.Stories[storyID] = branch
+	})
+}
+
+// recordPullRequest caches a pull request against its head branch.
+func (s *Session) recordPullRequest(prd, branch string, ref PRRef) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		if env.Git.PullRequests == nil {
+			env.Git.PullRequests = map[string]PRRef{}
+		}
+		env.Git.PullRequests[branch] = ref
+	})
+}
+
+// updatePRDMeta applies a change to a PRD's sidecar as a read-modify-write.
+//
+// A PRD whose directory has gone is not written to. savePRDMeta creates the
+// directory it needs — which is right when a PRD is being created, and wrong
+// here: these writes come from a run, which outlives the PRD being deleted
+// under it by however long the agent takes to notice. Recreating the directory
+// would resurrect a PRD the user deleted, as an empty husk holding nothing but
+// a branch name.
+func (s *Session) updatePRDMeta(prd string, change func(*prdMetaEnvelope)) error {
+	path, err := s.prdMetaPath(prd)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+		return nil
+	}
+	env, err := loadPRDMeta(path)
+	if err != nil {
+		return err
+	}
+	change(&env)
+	return savePRDMeta(path, env)
+}
+
+// PRDGitFor returns the branches and cached pull requests recorded for a PRD.
+// A PRD that has never run has none, which is not an error.
+func (s *Session) PRDGitFor(name string) (PRDGitState, error) {
+	path, err := s.prdMetaPath(name)
+	if err != nil {
+		return PRDGitState{}, err
+	}
+	env, err := loadPRDMeta(path)
+	if err != nil {
+		return PRDGitState{}, err
+	}
+	return env.Git, nil
 }
 
 // IssueRef is an external issue created for one user story.
@@ -67,12 +155,42 @@ type IssueRef struct {
 }
 
 // prdMetaPath resolves a PRD's sidecar path.
+//
+// It deliberately does not require prd.md to exist. The workflow settings are
+// chosen when a PRD is created, which is before the authoring agent has written
+// anything — resolving through PRDPath there would fail, and the user's choices
+// would be lost at the one moment they were actually made.
+//
+// An existing PRD is located through PRDPath so the legacy .chief/prd.md layout
+// keeps its sidecar beside it. Otherwise the standard location is used.
 func (s *Session) prdMetaPath(name string) (string, error) {
-	prdPath, err := s.PRDPath(name)
+	root, err := s.requireProject()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(prdPath), prdMetaFile), nil
+	if err := validPRDName(name); err != nil {
+		return "", err
+	}
+	if prdPath, err := s.PRDPath(name); err == nil {
+		return filepath.Join(filepath.Dir(prdPath), prdMetaFile), nil
+	}
+	return filepath.Join(root, chiefDir, prdsDir, name, prdMetaFile), nil
+}
+
+// validPRDName rejects anything that is not a plain name, so a caller cannot
+// steer the sidecar out of the PRD directory with "..".
+func validPRDName(name string) error {
+	if name == "" {
+		return fmt.Errorf("the PRD needs a name")
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return fmt.Errorf("PRD name %q: use only letters, digits, - and _", name)
+		}
+	}
+	return nil
 }
 
 // loadPRDMeta reads a PRD's sidecar. A missing file yields the zero value and
@@ -111,7 +229,12 @@ func savePRDMeta(path string, env prdMetaEnvelope) error {
 		return err
 	}
 
+	// The directory may not exist yet: workflow settings are chosen as a PRD is
+	// created, and nothing has written to it at that point.
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	tmp, err := os.CreateTemp(dir, ".loop-*.tmp")
 	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
@@ -216,7 +339,7 @@ func (s *Session) ResolveImplementationAgent(prd string) (string, error) {
 	}
 	if !s.agentIsAvailable(workflow.ImplementationAgent) {
 		return "", fmt.Errorf(
-			"%q is configured to be implemented by %s, which is not installed. Choose another agent before starting.",
+			"%s is set to be implemented by %s, which is not installed. Pick another agent to start the run.",
 			prd, workflow.ImplementationAgent)
 	}
 	return workflow.ImplementationAgent, nil
@@ -239,6 +362,23 @@ func (s *Session) DefaultAuthoringAgent() string {
 
 // DefaultImplementationAgent is the configured implementation agent.
 func (s *Session) DefaultImplementationAgent() string { return s.defaultImplementationAgent() }
+
+// stacksPerStory reports whether a run for this PRD should give each story its
+// own branch and pull request.
+//
+// The PRD's own choice wins over the project default. That is the point of
+// offering it when the PRD is created: one PRD in a project can be worth
+// stacking without turning every PRD into a stack, and the reverse.
+//
+// An unreadable sidecar falls back to the project setting rather than failing
+// the run — the run is the thing the user asked for, and this is a preference.
+func (s *Session) stacksPerStory(prd string) bool {
+	workflow, err := s.PRDWorkflowFor(prd)
+	if err == nil && workflow.StackPerStory {
+		return true
+	}
+	return s.LoopConfig().PerStory()
+}
 
 // agentIsAvailable reports whether an agent CLI was found on this machine.
 func (s *Session) agentIsAvailable(name string) bool {

@@ -2,7 +2,9 @@ package session
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -169,6 +171,82 @@ func TestOpenInApp_passesTheRepositoryRootAsAnArgument(t *testing.T) {
 	}
 	if root == "" {
 		t.Fatal("expected a project root")
+	}
+}
+
+// recordingEditor stands in for an installed editor and reports the single
+// argument it was launched with, which is the whole of what OpenPRDFile decides.
+func recordingEditor(t *testing.T) func() string {
+	t.Helper()
+	dir := t.TempDir()
+	recorded := filepath.Join(dir, "argv")
+	script := filepath.Join(dir, "code")
+	body := "#!/bin/sh\nprintf '%s' \"$1\" > " + recorded + "\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	original := lookPath
+	lookPath = func(file string) (string, error) {
+		if file != "code" {
+			return "", exec.ErrNotFound
+		}
+		return script, nil
+	}
+	t.Cleanup(func() { lookPath = original })
+
+	return func() string {
+		got, err := os.ReadFile(recorded)
+		if err != nil {
+			return ""
+		}
+		return string(got)
+	}
+}
+
+// A PRD is a document people edit. The system default opens whatever last
+// claimed .md — often a previewer — so VS Code wins when it is installed.
+func TestOpenPRDFile_opensInVSCodeWhenInstalled(t *testing.T) {
+	s := newTestSession(t)
+	root := openTestProject(t, s)
+	want := writePRD(t, root, "checkout", samplePRD)
+	launchedWith := recordingEditor(t)
+
+	if err := s.OpenPRDFile(t.Context(), "checkout"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := launchedWith(); got != want {
+		t.Errorf("launched with %q, want the PRD's own markdown at %q", got, want)
+	}
+}
+
+// Without VS Code the caller is asked for the system default, which is what
+// opening a PRD did before. That is a signal, not a failure to report.
+func TestOpenPRDFile_defersToTheSystemWhenVSCodeIsMissing(t *testing.T) {
+	s := newTestSession(t)
+	root := openTestProject(t, s)
+	writePRD(t, root, "checkout", samplePRD)
+	withInstalled(t, "cursor")
+
+	err := s.OpenPRDFile(t.Context(), "checkout")
+	if !errors.Is(err, ErrNoEditor) {
+		t.Fatalf("got %v, want ErrNoEditor", err)
+	}
+}
+
+// A PRD that cannot be located is a real failure, and must not be mistaken for
+// the fallback signal — the file would never be opened by anything.
+func TestOpenPRDFile_reportsAnUnknownPRD(t *testing.T) {
+	s := newTestSession(t)
+	openTestProject(t, s)
+	recordingEditor(t)
+
+	err := s.OpenPRDFile(t.Context(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected an error for a PRD that is not there")
+	}
+	if errors.Is(err, ErrNoEditor) {
+		t.Errorf("got ErrNoEditor, want a missing-PRD error: %v", err)
 	}
 }
 

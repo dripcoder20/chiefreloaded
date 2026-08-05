@@ -23,8 +23,11 @@ import type {
   AppStatus,
   DestinationStatus,
   Environment,
+  NewPRDRequest,
   PRDWorkflow,
   PublishReport,
+  PullRequestSet,
+  PRRef,
   Event as LoopEvent,
   PRDDetail,
   PRDSummary,
@@ -53,8 +56,11 @@ export type {
   AppStatus,
   DestinationStatus,
   Environment,
+  NewPRDRequest,
   PRDWorkflow,
   PublishReport,
+  PullRequestSet,
+  PRRef,
   LoopEvent,
   PRDDetail,
   PRDSummary,
@@ -78,6 +84,8 @@ export const EVENT_READY = "loop:ready";
 export const EVENT_AUTHOR = "loop:author";
 export const EVENT_AUTHOR_EXIT = "loop:author:exit";
 export const EVENT_MENU_NEW_PRD = "loop:menu:new-prd";
+export const EVENT_MENU_OPEN_PROJECT = "loop:menu:open-project";
+export const EVENT_MENU_SETTINGS = "loop:menu:settings";
 
 /**
  * True when running inside a real webview rather than a browser preview.
@@ -137,6 +145,18 @@ export function onMenuNewPRD(handler: () => void): () => void {
   return Events.On(EVENT_MENU_NEW_PRD, () => handler());
 }
 
+/** Fires when File ▸ Open Project… or its ⌘O / Ctrl+O shortcut is used. */
+export function onMenuOpenProject(handler: () => void): () => void {
+  if (!isDesktop) return mockOnMenuNewPRD(() => {});
+  return Events.On(EVENT_MENU_OPEN_PROJECT, () => handler());
+}
+
+/** Fires when the app menu's Settings… item or its ⌘, shortcut is used. */
+export function onMenuSettings(handler: () => void): () => void {
+  if (!isDesktop) return mockOnMenuNewPRD(() => {});
+  return Events.On(EVENT_MENU_SETTINGS, () => handler());
+}
+
 /**
  * Wails wraps single-argument payloads inconsistently across versions: some
  * deliver the value, some a one-element array. Normalise rather than depend on
@@ -181,11 +201,15 @@ const wailsApi = {
     get: (name: string): Promise<PRDDetail> => PRDService.Get(name),
     progress: (name: string) => PRDService.Progress(name),
     openFile: (name: string): Promise<void> => PRDService.OpenFile(name),
+    create: (req: NewPRDRequest): Promise<PRDSummary> => PRDService.Create(req),
     delete: (name: string): Promise<void> => PRDService.Delete(name),
     workflow: (name: string): Promise<PRDWorkflow> => PRDService.Workflow(name),
     saveWorkflow: (name: string, w: PRDWorkflow): Promise<void> =>
       PRDService.SaveWorkflow(name, w),
     issues: (name: string) => PRDService.Issues(name),
+    pullRequests: (name: string): Promise<PullRequestSet> => PRDService.PullRequests(name),
+    refreshPullRequests: (name: string): Promise<PullRequestSet> =>
+      PRDService.RefreshPullRequests(name),
     publish: (name: string): Promise<PublishReport> => PRDService.Publish(name),
   },
   run: {

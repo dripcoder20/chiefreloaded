@@ -124,8 +124,16 @@ func (m *Manager) Start(root string, provider chiefloop.Provider, spec Spec) (st
 
 	switch spec.Kind {
 	case KindNew:
-		if _, err := os.Stat(prdPath); err == nil {
-			return "", fmt.Errorf("%s already has a PRD; edit it instead", spec.PRD)
+		// The guard is about content, not existence. Loop writes a stub when the
+		// PRD is created — so that the user has something real to point at
+		// before the agent has written anything — and a session that refused to
+		// start because its own stub was there could never begin.
+		//
+		// A document that already has user stories is somebody's work, and this
+		// session's prompt would write over it.
+		if hasUserStories(prdPath) {
+			return "", fmt.Errorf(
+				"%s already has user stories. Use Update PRD to revise it.", spec.PRD)
 		}
 		if err := os.MkdirAll(prdDir, 0o755); err != nil {
 			return "", fmt.Errorf("create %s: %w", prdDir, err)
@@ -335,6 +343,19 @@ func (m *Manager) get(id string) (*Session, error) {
 // validPRDName mirrors chief's constraint. The name becomes a directory and part
 // of a branch name, so anything outside this set has to be refused at the door
 // rather than failing later inside git.
+// hasUserStories reports whether a PRD already contains written work.
+//
+// An unreadable or absent document counts as empty: the point is to protect
+// stories that exist, and refusing to start over a file nobody can parse would
+// strand the PRD with no way forward.
+func hasUserStories(prdPath string) bool {
+	doc, err := prd.LoadPRD(prdPath)
+	if err != nil {
+		return false
+	}
+	return len(doc.UserStories) > 0
+}
+
 func validPRDName(name string) error {
 	if name == "" {
 		return errors.New("the PRD needs a name")

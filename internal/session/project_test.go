@@ -414,3 +414,71 @@ func gitInit(t *testing.T, dir string) {
 		}
 	}
 }
+
+// allDonePRD is a PRD whose every story has already passed — the state of any
+// project that has been worked through and then reopened.
+const allDonePRD = `# Finished Project
+
+## User Stories
+
+### US-001: First story
+**Status:** done
+**Priority:** 1
+**Description:** Do the first thing.
+- [x] It works
+
+### US-002: Second story
+**Status:** done
+**Priority:** 2
+**Description:** Do the second thing.
+- [x] It also works
+`
+
+// Opening a project must reflect what its PRDs actually say. A PRD whose every
+// story passes is complete whether or not this session ever ran it — reporting
+// idle made a finished project look untouched the moment it was reopened.
+func TestReopeningAProjectReportsCompletedPRDs(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "finished", allDonePRD)
+	writePRD(t, root, "partial", oneStoryPRD)
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	byName := map[string]PRDSummary{}
+	for _, p := range s.PRDs() {
+		byName[p.Name] = p
+	}
+
+	done := byName["finished"]
+	if done.Completed != done.Total || done.Total == 0 {
+		t.Fatalf("expected every story complete, got %d/%d", done.Completed, done.Total)
+	}
+	if done.State != StateComplete {
+		t.Errorf("state = %q, want complete", done.State)
+	}
+
+	// A PRD with work left is not complete, and no run has touched it.
+	if got := byName["partial"]; got.State != StateIdle {
+		t.Errorf("an unfinished PRD reported %q, want idle", got.State)
+	}
+}
+
+// An empty PRD has nothing to complete, so it must not read as finished.
+func TestAnEmptyPRDIsNotComplete(t *testing.T) {
+	s := newTestSession(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	writePRD(t, root, "empty", "# PRD: Empty\n\n## User Stories\n")
+	if _, err := s.OpenProject(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range s.PRDs() {
+		if p.Name == "empty" && p.State == StateComplete {
+			t.Error("a PRD with no stories must not report complete")
+		}
+	}
+}

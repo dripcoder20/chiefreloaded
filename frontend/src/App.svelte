@@ -11,6 +11,11 @@
     pauseRun,
     resumeRun,
     pickProject,
+    editPrd,
+    closeNewPRD,
+    requestNewPRD,
+    toggleSettings,
+    closeSettings,
     startRun,
     stopRun,
   } from "./stores/app.svelte";
@@ -19,7 +24,11 @@
   import Inspector from "./shell/Inspector.svelte";
   import StoryList from "./views/StoryList.svelte";
   import LogPanel from "./views/LogPanel.svelte";
-  import Settings from "./views/Settings.svelte";
+  import SettingsDialog from "./views/SettingsDialog.svelte";
+  import NewPrdDialog from "./views/NewPrdDialog.svelte";
+  import PrdSettings from "./views/PrdSettings.svelte";
+  import Summary from "./views/Summary.svelte";
+  import PrLink from "./views/PrLink.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
   import UsageBar from "./views/UsageBar.svelte";
 
@@ -45,11 +54,58 @@
           ? "Resume"
           : "Start",
   );
-  // A conversational editing session is never labelled "New PRD" — the tab title
-  // follows what the pane is actually for.
-  const authorTabLabel = $derived(app.authorTarget.kind === "edit" ? "Edit PRD" : "New PRD");
+  /**
+   * The conversation belongs to a PRD, so a session is only "open" here while
+   * its own PRD is the selected one. Switching PRDs in the sidebar leaves the
+   * session running — it is just no longer the thing on screen.
+   */
+  const conversationOpen = $derived(
+    app.authorTarget !== null && app.authorTarget.prd === app.selectedPrd,
+  );
+
+  /**
+   * The third tab is the PRD's document: "Writing" while an agent is drafting a
+   * brand-new one, "Edit PRD" otherwise. It replaced a separate Update PRD
+   * button, which was a second control for the same destination — and one that
+   * looked like an action with consequences rather than a place to go.
+   */
+  const authorTabLabel = $derived(
+    conversationOpen && app.authorTarget?.kind === "new" ? "Writing" : "Edit PRD",
+  );
+
+  // Opening the tab is what starts an editing conversation, when there isn't
+  // already one for this PRD. The pane does the rest on its own.
+  function openConversation(): void {
+    const prd = app.selectedPrd;
+    if (!prd) return;
+    // editPrd switches the view itself, once the PRD has been read. Doing it
+    // here as well would show the tab as selected for a frame before the effect
+    // below bounced it back for having no conversation yet.
+    if (!conversationOpen) return void editPrd(prd);
+    app.view = "author";
+  }
+
+  // Selecting another PRD leaves this tab pointed at a conversation that is no
+  // longer on screen; showing that PRD's stories is the honest fallback.
+  $effect(() => {
+    if (app.view === "author" && !conversationOpen) app.view = "stories";
+  });
 
   const pauseLabel = $derived(transitioning === "pausing" ? "Pausing…" : "Pause");
+
+  /**
+   * The branch the work is going to, in order of how directly it answers that.
+   *
+   * A live run knows exactly, because it put itself there. A PRD that has run
+   * before recorded the branch it used. Failing both, the repository's own
+   * branch is where a run started now would land.
+   */
+  const branch = $derived(run?.branch || app.detail?.branch || app.project?.branch || "");
+  const branchTitle = $derived.by(() => {
+    if (run?.branch) return "The running loop is committing here";
+    if (app.detail?.branch) return `${app.detail.name} last ran on this branch`;
+    return "The repository's current branch";
+  });
 
   /**
    * The agent this run will use. Seeded from the PRD's saved choice — resolved
@@ -114,7 +170,7 @@
         logPanel?.toggle();
         break;
       case ",":
-        app.view = app.view === "settings" ? "stories" : "settings";
+        toggleSettings();
         break;
       case "n":
         app.view = app.view === "author" ? "stories" : "author";
@@ -196,6 +252,14 @@
     </div>
   {/if}
 
+  {#if app.settingsOpen}
+    <SettingsDialog onclose={closeSettings} />
+  {/if}
+
+  {#if app.newPrdOpen}
+    <NewPrdDialog onclose={closeNewPRD} />
+  {/if}
+
   {#if app.error}
     <div class="error" role="alert">
       {app.error}
@@ -209,6 +273,17 @@
     <main class="centre">
       <div class="toolbar">
         <span class="badge {runState}">{runState}</span>
+
+        <!-- Which branch the work is landing on, and its pull request if it has
+             one. A run switches branch as its first act, so the branch shown is
+             the run's while one exists and the repository's otherwise —
+             answering "where is my work going" rather than "where was I". -->
+        {#if branch}
+          <span class="branch mono" title={branchTitle}>⎇ {branch}</span>
+        {/if}
+        {#if app.detail?.pr}
+          <PrLink pr={app.detail.pr} now={app.now} />
+        {/if}
 
         {#if run}
           <span class="tnum meta">attempt {run.attempt}/{run.attemptBudget}</span>
@@ -247,25 +322,36 @@
         <button onclick={stopRun} disabled={!app.canStop}>{stopLabel}</button>
       </div>
 
+      <!-- Everything here is about the PRD selected in the sidebar. The
+           conversation appears only while that PRD has one; a tab for a session
+           that does not exist is a tab you can only be disappointed by. -->
       <div class="tabs" role="tablist">
         <button
           role="tab"
           aria-selected={app.view === "stories"}
           class:on={app.view === "stories"}
-          onclick={() => (app.view = "stories")}>Stories</button
+          onclick={() => (app.view = "stories")}>User Stories</button
         >
         <button
           role="tab"
-          aria-selected={app.view === "author"}
-          class:on={app.view === "author"}
-          onclick={() => (app.view = "author")}>{authorTabLabel}</button
+          aria-selected={app.view === "summary"}
+          class:on={app.view === "summary"}
+          onclick={() => (app.view = "summary")}>Summary</button
         >
         <button
           role="tab"
-          aria-selected={app.view === "settings"}
-          class:on={app.view === "settings"}
-          onclick={() => (app.view = "settings")}>Settings</button
+          aria-selected={app.view === "prd-settings"}
+          class:on={app.view === "prd-settings"}
+          onclick={() => (app.view = "prd-settings")}>PRD Settings</button
         >
+        {#if app.selectedPrd}
+          <button
+            role="tab"
+            aria-selected={app.view === "author"}
+            class:on={app.view === "author"}
+            onclick={openConversation}>{authorTabLabel}</button
+          >
+        {/if}
       </div>
 
       <div class="pane">
@@ -274,8 +360,10 @@
              itself when it is not the active view. -->
         <AuthorPane active={app.view === "author"} />
 
-        {#if app.view === "settings"}
-          <Settings />
+        {#if app.view === "summary"}
+          <Summary />
+        {:else if app.view === "prd-settings"}
+          <PrdSettings />
         {:else if app.view === "stories"}
           {#if !app.project || app.prds.length === 0}
             <div class="blank">
@@ -292,7 +380,7 @@
                 Loop opens the directory it was launched from.
               </p>
               <div class="blank-actions">
-                <button class="primary" onclick={() => (app.view = "author")}>Create a PRD</button>
+                <button class="primary" onclick={requestNewPRD}>Create a PRD</button>
                 <button onclick={pickProject}>Choose a project…</button>
               </div>
             </div>
@@ -335,7 +423,11 @@
     gap: 12px;
     height: 38px;
     padding-left: 84px; /* clear of the macOS traffic lights */
-    border-bottom: 1px solid var(--border);
+    /* The divider is drawn inside rather than as a border. Everything here is
+       border-box, so a 1px bottom border would leave a 37px content box and
+       centre the title half a pixel above the traffic lights — which macOS
+       positions against the full 38px inset (InvisibleTitleBarHeight). */
+    box-shadow: inset 0 -1px 0 var(--border);
     --wails-draggable: drag;
   }
 
@@ -445,6 +537,21 @@
   .git-warn {
     color: var(--warn);
     font-size: 12px;
+  }
+
+  /* Capped: branch templates produce long names, and the toolbar's job is to
+     say which branch, not to render every character of it. */
+  .branch {
+    max-width: 30ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-3);
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
   }
 
   /* Kept low-weight: it sits next to Start but must not compete with it. */

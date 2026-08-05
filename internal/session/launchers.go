@@ -14,8 +14,10 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -107,7 +109,7 @@ func (s *Session) LocalApps() []AppStatus {
 type ErrAppNotInstalled struct{ Name string }
 
 func (e *ErrAppNotInstalled) Error() string {
-	return fmt.Sprintf("%s is not installed. Install it, then try opening the repository again.", e.Name)
+	return fmt.Sprintf("%s is not installed. Install it, then try again.", e.Name)
 }
 
 // OpenInApp opens the project root in a local editor.
@@ -124,14 +126,46 @@ func (s *Session) OpenInApp(ctx context.Context, app LocalApp) error {
 	if !status.Available {
 		return &ErrAppNotInstalled{Name: status.Name}
 	}
+	return launchApp(ctx, status, root, "this project")
+}
 
+// launchApp runs a resolved application against one path.
+//
+// subject names what failed to open in the user's terms — "this project", or a
+// file name — because "code would not open /Users/…/.chief/prds/x/prd.md" makes
+// the reader do the work of recognising their own PRD.
+func launchApp(ctx context.Context, status AppStatus, target, subject string) error {
 	// The path is a discrete argument, never interpolated into a command line.
-	cmd := exec.CommandContext(ctx, status.Path, root)
+	cmd := exec.CommandContext(ctx, status.Path, target)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s was found but could not open the repository: %w: %s",
-			status.Name, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s is installed but would not open %s. %s",
+			status.Name, subject, firstLine(string(out)))
 	}
 	return nil
+}
+
+// ErrNoEditor reports that none of the editors Loop knows how to launch is
+// installed. It is a signal to fall back to whatever the operating system
+// considers the default for the file, not a failure worth showing anyone.
+var ErrNoEditor = errors.New("no preferred editor is installed")
+
+// OpenPRDFile opens a PRD's markdown in VS Code.
+//
+// A PRD is a document people edit, and handing markdown to the system default
+// tends to open a previewer or whatever last claimed the extension — rarely the
+// editor the project is being written in. VS Code is preferred when it is
+// installed; ErrNoEditor asks the caller for the system default instead, which
+// is what this used to do unconditionally.
+func (s *Session) OpenPRDFile(ctx context.Context, name string) error {
+	path, err := s.PRDPath(name)
+	if err != nil {
+		return err
+	}
+	editor := resolveApp(AppVSCode)
+	if !editor.Available {
+		return ErrNoEditor
+	}
+	return launchApp(ctx, editor, path, filepath.Base(path))
 }
 
 // ------------------------------------------------------------------ github ----
@@ -159,7 +193,8 @@ func gitRemoteURL(ctx context.Context, root string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("this project has no GitHub repository configured (no 'origin' remote)")
+		return "", fmt.Errorf(
+			"No GitHub repo is set up for this project. Add a remote named 'origin' to open it on GitHub.")
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -180,7 +215,8 @@ func githubWebURL(remote string) (string, error) {
 func githubSlug(remote string) (string, error) {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
-		return "", fmt.Errorf("this project has no GitHub repository configured")
+		return "", fmt.Errorf(
+			"No GitHub repo is set up for this project. Add a remote named 'origin' to open it on GitHub.")
 	}
 	if rest, ok := strings.CutPrefix(remote, "git@github.com:"); ok {
 		return validateSlug(strings.TrimSuffix(rest, ".git"))
@@ -188,7 +224,8 @@ func githubSlug(remote string) (string, error) {
 	if rest, ok := cutGitHubHTTPS(remote); ok {
 		return validateSlug(strings.TrimSuffix(rest, ".git"))
 	}
-	return "", fmt.Errorf("the configured remote %q is not a GitHub repository", remote)
+	return "", fmt.Errorf(
+		"This project's remote is not on GitHub (%s). Point 'origin' at a GitHub repo to open it there.", remote)
 }
 
 // cutGitHubHTTPS matches the https/ssh URL forms, tolerating an embedded
@@ -213,13 +250,27 @@ func cutGitHubHTTPS(remote string) (string, bool) {
 	return "", false
 }
 
+// firstLine trims a subprocess's output down to something worth showing. The
+// rest is usually a stack trace or a usage banner, which tells a user nothing.
+func firstLine(out string) string {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return "It reported no reason."
+	}
+	if at := strings.IndexByte(trimmed, '\n'); at >= 0 {
+		trimmed = trimmed[:at]
+	}
+	return trimmed
+}
+
 // validateSlug rejects anything that is not exactly owner/repo, so a malformed
 // remote cannot produce a URL that points somewhere unrelated.
 func validateSlug(slug string) (string, error) {
 	slug = strings.Trim(slug, "/")
 	parts := strings.Split(slug, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", fmt.Errorf("the configured remote does not name a GitHub repository")
+		return "", fmt.Errorf(
+			"This project's GitHub remote does not name a repository. Check that 'origin' looks like owner/repo.")
 	}
 	return slug, nil
 }

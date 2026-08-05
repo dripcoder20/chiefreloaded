@@ -26,8 +26,17 @@
    * of which PRD happens to be selected.
    */
 
-  function stateOf(name: string): string {
-    return app.runs.find((r) => r.prd === name)?.state ?? "idle";
+  /**
+   * The state to show for a PRD.
+   *
+   * A live run in this session wins — it is the only thing that can report
+   * running, paused or failed. Otherwise the PRD's own state stands, which is
+   * what the document says: reopening a project full of finished PRDs used to
+   * show every one of them as untouched, because this only ever looked at runs
+   * and there are none in a fresh session.
+   */
+  function stateOf(prd: { name: string; state?: string }): string {
+    return app.runs.find((r) => r.prd === prd.name)?.state ?? prd.state ?? "idle";
   }
 
   // The three actions, shared verbatim by the dropdown and the context menu so
@@ -265,7 +274,7 @@
   {/if}
 
   {#each app.prds as prd (prd.name)}
-    {@const state = stateOf(prd.name)}
+    {@const state = stateOf(prd)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- The context menu duplicates the keyboard-accessible three-dot button, so
          the right-click shortcut on this layout row is a pure enhancement. -->

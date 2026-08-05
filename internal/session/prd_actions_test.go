@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dripcoder/loop/internal/authoring"
 	"github.com/dripcoder/loop/internal/fakeagent"
@@ -112,18 +113,12 @@ func TestDeletePRDUnknownPRD(t *testing.T) {
 // Deleting a PRD that is being implemented would silently terminate the run, or
 // leave the agent writing into a directory that no longer exists.
 func TestDeletePRDRefusedWhileImplementationIsActive(t *testing.T) {
-	s, root, _ := startRun(t, oneStoryPRD, fakeagent.Behaviour{
-		Text: "working", WriteFile: "out.txt", FileBody: "x", Commit: true, Done: true,
-	})
-
-	// Force the run to look active regardless of how far it has got, so the test
-	// is about the guard rather than about race timing.
-	s.mu.Lock()
-	for id, snap := range s.runs {
-		snap.State = StateRunning
-		s.runs[id] = snap
-	}
-	s.mu.Unlock()
+	// An agent that says nothing keeps the run genuinely active for the whole
+	// test. Writing StateRunning into s.runs looked like it did the same, but
+	// the guard consults the live run and never reads that field — so the test
+	// was really racing the agent to finish, and lost often enough to matter.
+	s, root, runID := startRun(t, oneStoryPRD, fakeagent.Behaviour{Silence: 10 * time.Second})
+	t.Cleanup(func() { stopRun(t, s, runID) })
 
 	err := s.DeletePRD("main")
 	if err == nil {

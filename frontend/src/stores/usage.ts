@@ -54,6 +54,13 @@ export type StoryUsage = {
   storyId: string;
   attempts: number;
   totals: UsageTotals;
+  /**
+   * The period this story spent tokens, in unix milliseconds — first usage to
+   * last, not wall clock. It is the only story timing that survives a restart,
+   * so the summary is built from it rather than from the run's own timings.
+   */
+  startedAt?: number;
+  endedAt?: number;
 };
 
 /**

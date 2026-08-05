@@ -5,11 +5,14 @@ import {
   LoopState,
   onEvents,
   onMenuNewPRD,
+  onMenuOpenProject,
+  onMenuSettings,
   onReady,
   type AgentDefaults,
   type AppStatus,
   type DestinationStatus,
   type Environment,
+  type NewPRDRequest,
   type PRDWorkflow,
   type PublishReport,
   type Settings,
@@ -21,6 +24,7 @@ import {
   type RunSnapshot,
 } from "../platform";
 import { ingest } from "./logs.svelte";
+import { errorMessage } from "./errors";
 
 /**
  * Application state.
@@ -31,7 +35,9 @@ import { ingest } from "./logs.svelte";
  * to sequence-number events.
  */
 
-export type View = "stories" | "author" | "settings";
+// Settings is deliberately absent: it is global project configuration, not a
+// per-PRD working context like the others, and it opens as a dialog.
+export type View = "stories" | "summary" | "prd-settings" | "author";
 
 /**
  * A control request that has been sent but not yet resolved.
@@ -83,10 +89,12 @@ export {
 } from "./sessionMeta";
 export type { MetaValue, StoryMeta, SessionMetaRun } from "./sessionMeta";
 
+
 import type {
   UsageReport,
   UsageTotals,
   SessionUsage,
+  StoryUsage,
   UsageThresholds,
 } from "./usage";
 import { DEFAULT_THRESHOLDS, usageErrorMessage } from "./usage";
@@ -121,7 +129,22 @@ class AppState {
    * against — independent of `selectedPrd`, which the rail changes for reasons
    * that have nothing to do with the open session.
    */
-  authorTarget = $state<{ kind: "new" } | { kind: "edit"; prd: string }>({ kind: "new" });
+  authorTarget = $state<{ kind: "new" | "edit"; prd: string } | null>(null);
+
+  /** True while the settings dialog is open. */
+  settingsOpen = $state(false);
+
+  /** True while the New PRD dialog is open. */
+  newPrdOpen = $state(false);
+
+  /**
+   * PRDs with a live authoring conversation, by name.
+   *
+   * The conversation is a per-PRD surface, so the tab strip shows it only for
+   * the PRD it belongs to. Keyed by name rather than held as one flag because
+   * more than one PRD can be mid-conversation.
+   */
+  authoring = $state<Record<string, boolean>>({});
 
   /** The PRD a delete confirmation is currently asking about, if any. */
   pendingDelete = $state<string | null>(null);
@@ -152,11 +175,25 @@ class AppState {
   /** Ticks once a second so elapsed timers re-render without one timer each. */
   now = $state(Date.now());
 
-  /** The run attached to the selected PRD, if any. */
+  /**
+   * The latest run of the selected PRD, if any.
+   *
+   * Latest, not first: a PRD accumulates a run for every Start, and the
+   * controls describe the session you are in. Taking the first match left Stop
+   * disabled after start, stop, start — it was reading the stopped run while
+   * the new one was underway. Position cannot be trusted either, since the Go
+   * side holds runs in a map and the list arrives in no particular order, so
+   * the answer comes from when each run started.
+   */
   get currentRun(): RunSnapshot | null {
     const prd = this.selectedPrd;
     if (!prd) return null;
-    return this.runs.find((r) => r.prd === prd) ?? null;
+    return this.runs
+      .filter((r) => r.prd === prd)
+      .reduce<RunSnapshot | null>(
+        (latest, run) => (!latest || (run.startedAt ?? 0) >= (latest.startedAt ?? 0) ? run : latest),
+        null,
+      );
   }
 
   get currentPrd(): PRDSummary | null {
@@ -223,6 +260,20 @@ class AppState {
     return this.usage?.project;
   }
 
+  /**
+   * Every story this run has spent usage on, with its own totals and attempt
+   * count — not just the one executing.
+   *
+   * The report already carries this: the session history folds each run's
+   * stories from the same records. Showing only the current story made the
+   * Story scope useless the moment a run moved on.
+   */
+  get currentRunStories(): StoryUsage[] {
+    const run = this.currentRun;
+    if (!run) return [];
+    return this.usage?.sessions?.find((s) => s.runId === run.id)?.stories ?? [];
+  }
+
   /** The retained-session history, newest first, for the General scope. */
   get generalSessions(): SessionUsage[] {
     return this.usage?.sessions ?? [];
@@ -260,6 +311,8 @@ let unsubscribe: Array<() => void> = [];
 export async function connect(): Promise<void> {
   unsubscribe.push(onReady(() => void refresh()));
   unsubscribe.push(onMenuNewPRD(requestNewPRD));
+  unsubscribe.push(onMenuOpenProject(() => void pickProject()));
+  unsubscribe.push(onMenuSettings(toggleSettings));
   unsubscribe.push(
     onEvents((events) => {
       for (const ev of events) apply(ev);
@@ -298,7 +351,7 @@ export async function refresh(): Promise<void> {
       app.config = await api.project.getConfig();
     }
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -337,12 +390,26 @@ function apply(ev: LoopEvent): void {
 
     case EventKind.EvStoryStarted:
       app.activity = ev.text ? `${ev.storyId}: ${ev.text}` : (ev.storyId ?? "");
+      // The engine writes the story's in-progress status into prd.md as it
+      // builds the prompt, and nothing watches that file. Without this the
+      // story list only catches up when a story finishes, so the one being
+      // worked on never looks like it.
+      void reloadPrds();
       break;
 
     case EventKind.EvStoryDone:
     case EventKind.EvStorySkipped:
     case EventKind.EvStoryFailed:
       void reloadPrds();
+      break;
+
+    case EventKind.EvGit:
+      // A branch was cut or a pull request opened, so what the interface knows
+      // about both is now out of date. Reloading the PRDs picks up the branch
+      // the engine just recorded; the pull request is confirmed separately
+      // because that one costs a call to gh.
+      void reloadPrds();
+      if (ev.prd && ev.git?.prNumber) void refreshPullRequests(ev.prd);
       break;
 
     case EventKind.EvAgentText:
@@ -378,7 +445,7 @@ async function reloadRuns(): Promise<void> {
   try {
     app.runs = await api.run.list();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -404,10 +471,51 @@ async function reloadPrds(): Promise<void> {
  * awaiting an answer, so the shortcut cannot pull focus off a prompt that is
  * blocking its run.
  */
+/**
+ * Open or close the settings dialog.
+ *
+ * Ignored while a question is waiting, for the same reason New PRD is: a native
+ * accelerator fires regardless of what the webview is showing, and stacking a
+ * dialog over a decision that blocks a run helps nobody.
+ */
+export function toggleSettings(): void {
+  if (app.questions.length > 0) return;
+  app.settingsOpen = !app.settingsOpen;
+}
+
+export function closeSettings(): void {
+  app.settingsOpen = false;
+}
+
 export function requestNewPRD(): void {
   if (app.questions.length > 0) return;
-  app.authorTarget = { kind: "new" };
-  app.view = "author";
+  app.newPrdOpen = true;
+}
+
+export function closeNewPRD(): void {
+  app.newPrdOpen = false;
+}
+
+/**
+ * Create a PRD and hand it straight to an authoring conversation.
+ *
+ * The PRD exists on disk before the agent is asked for anything, so it is in
+ * the sidebar immediately and survives a conversation that is abandoned. The
+ * caller then starts the session against a PRD that is already real.
+ */
+export async function createPrd(req: NewPRDRequest): Promise<string | null> {
+  try {
+    const created = await api.prd.create(req);
+    app.newPrdOpen = false;
+    await reloadPrds();
+    await selectPrd(created.name);
+    app.authorTarget = { kind: "new", prd: created.name };
+    app.view = "author";
+    return created.name;
+  } catch (err) {
+    app.error = errorMessage(err);
+    return null;
+  }
 }
 
 /**
@@ -422,7 +530,7 @@ export async function editPrd(name: string): Promise<void> {
   try {
     await api.prd.get(name);
   } catch (err) {
-    app.error = `${name} cannot be opened for editing: ${err}`;
+    app.error = `${name} cannot be opened for editing. ${errorMessage(err)}`;
     return;
   }
   await selectPrd(name);
@@ -435,7 +543,7 @@ export async function openPrdFile(name: string): Promise<void> {
   try {
     await api.prd.openFile(name);
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -470,7 +578,7 @@ export async function deletePrd(name: string): Promise<void> {
     }
     await reloadPrds();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
     // Re-read the authoritative list so a partially applied or refused delete
     // cannot leave the rail disagreeing with what is on disk.
     await reloadPrds();
@@ -490,7 +598,7 @@ export async function openOnGitHub(): Promise<void> {
   try {
     await api.project.openOnGitHub();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     app.launching = false;
   }
@@ -508,7 +616,7 @@ export async function openInApp(target: string): Promise<void> {
   try {
     await api.project.openInApp(target);
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     app.launching = false;
   }
@@ -544,7 +652,7 @@ export async function savePrdWorkflow(name: string, workflow: PRDWorkflow): Prom
     await api.prd.saveWorkflow(name, workflow);
     return true;
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
     return false;
   }
 }
@@ -567,7 +675,7 @@ export async function publishIssues(name: string): Promise<PublishReport | null>
     }
     return report;
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
     return null;
   }
 }
@@ -591,7 +699,34 @@ export async function selectPrd(name: string): Promise<void> {
     const first = app.detail.stories?.find((s) => s.status !== "done");
     app.selectedStory = first?.id ?? app.detail.stories?.[0]?.id ?? null;
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
+  }
+  void refreshPullRequests(name);
+}
+
+/**
+ * Re-read pull request state from GitHub for a PRD, in the background.
+ *
+ * Deliberately not awaited by its callers. It shells out to gh, which takes the
+ * better part of a second, and the cached state is already on screen by then —
+ * blocking selection on a network round trip to sharpen something already
+ * rendered would be the wrong trade every time.
+ *
+ * Failure is silent by design. A project with no GitHub remote, no gh, or no
+ * network is a normal project; the branch names are still right and the reason
+ * is carried in the result rather than raised as an error.
+ */
+export async function refreshPullRequests(name: string): Promise<void> {
+  try {
+    const set = await api.prd.refreshPullRequests(name);
+    // Nothing was confirmed, so nothing on screen should change.
+    if (!set?.checkedAt) return;
+    // Re-read the detail rather than patching it: the Go side has already
+    // written the fresh refs into the sidecar, and one path that assembles a
+    // PRD is easier to trust than two.
+    if (app.selectedPrd === name) app.detail = await api.prd.get(name);
+  } catch {
+    // See above: an unreachable GitHub is not an error worth showing.
   }
 }
 
@@ -604,7 +739,7 @@ export async function pickProject(): Promise<void> {
     app.selectedPrd = null;
     await refresh();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -615,7 +750,7 @@ export async function openProject(path: string): Promise<void> {
     app.selectedPrd = null;
     await refresh();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 
@@ -645,7 +780,7 @@ export async function startRun(agent?: string): Promise<void> {
     await api.run.start({ prd, provider: agent || undefined } as never);
     await reloadRuns();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     clearPending(prd);
   }
@@ -690,7 +825,7 @@ async function transition(
     await reloadRuns();
   } catch (err) {
     await reloadRuns();
-    app.error = String(err);
+    app.error = errorMessage(err);
   } finally {
     clearPending(prd);
   }
@@ -721,7 +856,7 @@ async function guard(fn: () => Promise<unknown>): Promise<void> {
     await fn();
     await reloadRuns();
   } catch (err) {
-    app.error = String(err);
+    app.error = errorMessage(err);
   }
 }
 

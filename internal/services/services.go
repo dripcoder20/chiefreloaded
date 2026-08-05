@@ -12,6 +12,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dripcoder/loop/internal/authoring"
@@ -116,8 +117,18 @@ func (p *PRDService) Progress(name string) (map[string][]session.ProgressEntry, 
 	return p.s.Progress(name)
 }
 
-// OpenFile opens a PRD's prd.md in the user's default editor.
+// OpenFile opens a PRD's prd.md, preferring VS Code.
 func (p *PRDService) OpenFile(name string) error {
+	err := p.s.OpenPRDFile(context.Background(), name)
+	if !errors.Is(err, session.ErrNoEditor) {
+		return err
+	}
+	return p.openWithSystemDefault(name)
+}
+
+// openWithSystemDefault hands the file to the operating system. Reached only
+// when no editor Loop knows how to launch is installed.
+func (p *PRDService) openWithSystemDefault(name string) error {
 	path, err := p.s.PRDPath(name)
 	if err != nil {
 		return err
@@ -127,6 +138,12 @@ func (p *PRDService) OpenFile(name string) error {
 		return fmt.Errorf("the application is not running")
 	}
 	return app.Browser.OpenFile(path)
+}
+
+// Create writes a new PRD and returns its summary, so the caller can select it
+// without waiting for a rescan.
+func (p *PRDService) Create(req session.NewPRDRequest) (session.PRDSummary, error) {
+	return p.s.CreatePRD(context.Background(), req)
 }
 
 // Delete removes a PRD directory and everything in it.
@@ -140,6 +157,19 @@ func (p *PRDService) Workflow(name string) (session.PRDWorkflow, error) {
 // SaveWorkflow stores a PRD's workflow settings. It starts nothing.
 func (p *PRDService) SaveWorkflow(name string, w session.PRDWorkflow) error {
 	return p.s.SavePRDWorkflow(name, w)
+}
+
+// PullRequests returns the cached pull request state for a PRD's branches,
+// without contacting GitHub.
+func (p *PRDService) PullRequests(name string) (session.PullRequestSet, error) {
+	return p.s.PullRequestsFor(name)
+}
+
+// RefreshPullRequests re-reads pull request state from GitHub. Slow enough to be
+// explicit — it shells out to gh — and never fails because GitHub is out of
+// reach; that is reported in the result.
+func (p *PRDService) RefreshPullRequests(name string) (session.PullRequestSet, error) {
+	return p.s.RefreshPullRequests(context.Background(), name)
 }
 
 // Issues returns the external issues already created for a PRD's stories.

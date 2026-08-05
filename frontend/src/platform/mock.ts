@@ -722,12 +722,28 @@ export const mockApi = {
       }) as PRDDetail,
     progress: async () => ({}) as never,
     openFile: async (): Promise<void> => {},
+    create: async (req: { name: string }) =>
+      ({
+        name: req.name,
+        path: `/Users/you/Code/checkout/.chief/prds/${req.name}/prd.md`,
+        title: req.name,
+        total: 0,
+        completed: 0,
+        inProgress: 0,
+        legacy: false,
+        state: LoopState.StateIdle,
+      }) as never,
     delete: async (): Promise<void> => {},
     workflow: async () => mockWorkflow as never,
     saveWorkflow: async (_name: string, w: unknown): Promise<void> => {
       mockWorkflow = w as typeof mockWorkflow;
     },
     issues: async () => ({}) as never,
+    // The browser build has no gh and no repository, so the cached shape is the
+    // honest answer: branches with no confirmed pull request behind them.
+    pullRequests: async () => ({ byBranch: {} }) as never,
+    refreshPullRequests: async () =>
+      ({ byBranch: {}, unavailable: "no GitHub repository in the browser build" }) as never,
     publish: async (name: string) =>
       ({
         prd: name,
