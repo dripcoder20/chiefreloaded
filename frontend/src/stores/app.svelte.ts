@@ -339,6 +339,11 @@ function apply(ev: LoopEvent): void {
 
     case EventKind.EvStoryStarted:
       app.activity = ev.text ? `${ev.storyId}: ${ev.text}` : (ev.storyId ?? "");
+      // The engine writes the story's in-progress status into prd.md as it
+      // builds the prompt, and nothing watches that file. Without this the
+      // story list only catches up when a story finishes, so the one being
+      // worked on never looks like it.
+      void reloadPrds();
       break;
 
     case EventKind.EvStoryDone:
