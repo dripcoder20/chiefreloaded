@@ -125,8 +125,19 @@ let run: RunSnapshot = {
   attemptBudget: 8,
   startedAt: Date.now() - 252_000,
   provider: "claude",
+  // Resolved from the agent's own output, so the active story shows a real
+  // Agent/Model pair rather than the configured default.
+  model: "claude-opus-4-8",
   pendingGitErrors: 0,
 } as RunSnapshot;
+
+// Per-PRD workflow settings, which the New PRD tab writes and the run toolbar
+// reads back. Held in a variable so a save round-trips in browser dev.
+let mockWorkflow = {
+  implementationAgent: "codex",
+  stackPerStory: false,
+  issueDestination: "",
+};
 
 // ------------------------------------------------------------------- usage --
 //
@@ -668,6 +679,38 @@ export const mockApi = {
       }) as never,
     saveConfig: async (): Promise<void> => {},
     rescan: async (): Promise<void> => {},
+    // A mixed installation, so browser dev exercises both the launch path and
+    // the "not installed" alert without anyone having to uninstall an editor.
+    localApps: async () =>
+      [
+        { app: "vscode", name: "VS Code", available: true },
+        { app: "claude", name: "Claude", available: true },
+        { app: "cursor", name: "Cursor", available: false },
+        { app: "codex", name: "Codex", available: false },
+      ] as never,
+    openInApp: async (app: string): Promise<void> => {
+      if (app === "cursor" || app === "codex") {
+        const name = app === "cursor" ? "Cursor" : "Codex";
+        throw new Error(
+          `${name} is not installed. Install it, then try opening the repository again.`,
+        );
+      }
+    },
+    openOnGitHub: async (): Promise<void> => {},
+    agentDefaults: async () =>
+      ({ authoring: "claude", implementation: "codex" }) as never,
+    // One configured destination and one that is not, so browser dev shows both
+    // an enabled option and a disabled one explaining its setup.
+    issueDestinations: async () =>
+      [
+        {
+          destination: "linear",
+          name: "Linear",
+          available: false,
+          reason: "set LINEAR_API_KEY to a Linear personal API key",
+        },
+        { destination: "github", name: "GitHub Issues", available: true },
+      ] as never,
   },
   prd: {
     list: async (): Promise<PRDSummary[]> => [summary, docs],
@@ -680,6 +723,28 @@ export const mockApi = {
     progress: async () => ({}) as never,
     openFile: async (): Promise<void> => {},
     delete: async (): Promise<void> => {},
+    workflow: async () => mockWorkflow as never,
+    saveWorkflow: async (_name: string, w: unknown): Promise<void> => {
+      mockWorkflow = w as typeof mockWorkflow;
+    },
+    issues: async () => ({}) as never,
+    publish: async (name: string) =>
+      ({
+        prd: name,
+        results: [
+          {
+            storyId: "US-001",
+            ref: {
+              destination: "github",
+              identifier: "#41",
+              url: "https://github.com/acme/checkout/issues/41",
+            },
+            skipped: false,
+          },
+          { storyId: "US-002", error: "rate limited", skipped: false },
+        ],
+        failed: ["US-002"],
+      }) as never,
   },
   run: {
     start: async (): Promise<string> => {

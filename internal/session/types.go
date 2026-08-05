@@ -112,18 +112,27 @@ const (
 
 // RunSnapshot is the live state of a single run.
 type RunSnapshot struct {
-	ID            string     `json:"id"`
-	PRD           string     `json:"prd"`
-	State         LoopState  `json:"state"`
-	StoryID       string     `json:"storyId,omitempty"`
-	Attempt       int        `json:"attempt"`
-	AttemptBudget int        `json:"attemptBudget"`
-	StartedAt     int64      `json:"startedAt,omitempty"`
-	FinishedAt    int64      `json:"finishedAt,omitempty"`
-	Worktree      string     `json:"worktree,omitempty"`
-	Branch        string     `json:"branch,omitempty"`
-	Provider      string     `json:"provider,omitempty"`
-	Error         *ErrorInfo `json:"error,omitempty"`
+	ID            string    `json:"id"`
+	PRD           string    `json:"prd"`
+	State         LoopState `json:"state"`
+	StoryID       string    `json:"storyId,omitempty"`
+	Attempt       int       `json:"attempt"`
+	AttemptBudget int       `json:"attemptBudget"`
+	StartedAt     int64     `json:"startedAt,omitempty"`
+	FinishedAt    int64     `json:"finishedAt,omitempty"`
+	Worktree      string    `json:"worktree,omitempty"`
+	Branch        string    `json:"branch,omitempty"`
+	Provider      string    `json:"provider,omitempty"`
+	// Model is the provider model this session is actually using, learned from
+	// the agent's own usage output rather than from configured defaults — a
+	// session may run an override or a provider-selected fallback.
+	Model string `json:"model,omitempty"`
+	// ModelUnavailable reports that the agent has produced usage but named no
+	// model, which several CLIs never do. It is what separates "not reported by
+	// this provider" from "not resolved yet"; showing either as the other would
+	// be a guess.
+	ModelUnavailable bool       `json:"modelUnavailable,omitempty"`
+	Error            *ErrorInfo `json:"error,omitempty"`
 	// PendingGitErrors counts non-fatal git failures needing attention. The run
 	// continues regardless; this drives the "N git actions need attention" banner.
 	PendingGitErrors int `json:"pendingGitErrors"`

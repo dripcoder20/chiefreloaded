@@ -46,6 +46,8 @@ Commands:
   show <prd>        Show a PRD's stories
   run <prd>         Run a PRD to completion, streaming progress
   usage             Show the cumulative usage roll-up (project/session/story)
+  workflow <prd>    Show a PRD's implementation agent, stacking and issue settings
+  publish <prd>     Create one tracker issue per user story and link it back
   watch             Stream the session event log until interrupted
 
 Flags:
@@ -96,7 +98,7 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
-	case "doctor", "list", "show", "run", "usage", "watch":
+	case "doctor", "list", "show", "run", "usage", "watch", "workflow", "publish":
 	default:
 		return fmt.Errorf("unknown command %q (try `loopctl help`)", cmd)
 	}
@@ -137,6 +139,16 @@ func run(args []string) error {
 		return runPRD(ctx, s, cmdArgs[0])
 	case "usage":
 		return showUsage(s, *asJSON)
+	case "workflow":
+		if len(cmdArgs) < 1 {
+			return fmt.Errorf("workflow needs a PRD name")
+		}
+		return showWorkflow(s, cmdArgs[0], *asJSON)
+	case "publish":
+		if len(cmdArgs) < 1 {
+			return fmt.Errorf("publish needs a PRD name")
+		}
+		return publish(ctx, s, cmdArgs[0], *asJSON)
 	case "watch":
 		return watch(ctx, s)
 	}
@@ -346,6 +358,95 @@ func show(s *session.Session, name string, asJSON bool) error {
 // read model the GUI status bar and usage panel render from — project (General),
 // per-run (Session) and per-story (Story) scopes — so the end-to-end tests can
 // assert live totals and, after a restart, that persisted history reloads.
+// showWorkflow prints a PRD's workflow settings plus the agent that would
+// actually implement it, which is the resolution the run itself performs.
+func showWorkflow(s *session.Session, name string, asJSON bool) error {
+	workflow, err := s.PRDWorkflowFor(name)
+	if err != nil {
+		return err
+	}
+	issues, err := s.PublishedIssues(name)
+	if err != nil {
+		return err
+	}
+	// Resolution can legitimately fail — a saved agent that is no longer
+	// installed — and reporting that is the point of showing it here.
+	resolved, resolveErr := s.ResolveImplementationAgent(name)
+
+	if asJSON {
+		return emitJSON(struct {
+			Workflow      session.PRDWorkflow         `json:"workflow"`
+			ResolvedAgent string                      `json:"resolvedAgent"`
+			ResolveError  string                      `json:"resolveError,omitempty"`
+			Issues        map[string]session.IssueRef `json:"issues"`
+			Destinations  []session.DestinationStatus `json:"destinations"`
+		}{
+			Workflow:      workflow,
+			ResolvedAgent: resolved,
+			ResolveError:  errText(resolveErr),
+			Issues:        issues,
+			Destinations:  s.IssueDestinations(context.Background()),
+		})
+	}
+
+	w := table()
+	fmt.Fprintf(w, "implementation agent\t%s\n", orNone(workflow.ImplementationAgent))
+	fmt.Fprintf(w, "resolved agent\t%s\n", orNone(resolved))
+	if resolveErr != nil {
+		fmt.Fprintf(w, "resolve error\t%s\n", resolveErr)
+	}
+	fmt.Fprintf(w, "stack per story\t%v\n", workflow.StackPerStory)
+	fmt.Fprintf(w, "issue destination\t%s\n", orNone(string(workflow.IssueDestination)))
+	for storyID, ref := range issues {
+		fmt.Fprintf(w, "issue %s\t%s %s\n", storyID, ref.Identifier, ref.URL)
+	}
+	return w.Flush()
+}
+
+// publish creates the issues and reports what happened per story, so a partial
+// failure is legible rather than one verdict.
+func publish(ctx context.Context, s *session.Session, name string, asJSON bool) error {
+	report, err := s.PublishIssues(ctx, name)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return emitJSON(report)
+	}
+
+	w := table()
+	fmt.Fprintln(w, "STORY\tISSUE\tURL\tNOTE")
+	for _, r := range report.Results {
+		note := ""
+		if r.Skipped {
+			note = "already created"
+		}
+		if r.Error != "" {
+			note = r.Error
+		}
+		if r.Ref == nil {
+			fmt.Fprintf(w, "%s\t—\t—\t%s\n", r.StoryID, note)
+			continue
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.StoryID, r.Ref.Identifier, r.Ref.URL, note)
+	}
+	return w.Flush()
+}
+
+func orNone(v string) string {
+	if v == "" {
+		return "—"
+	}
+	return v
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 func showUsage(s *session.Session, asJSON bool) error {
 	report := s.Usage()
 	if asJSON {

@@ -16,8 +16,9 @@ import (
 // present-but-empty need different handling on migration.
 type rawConfig struct {
 	Config `yaml:",inline"`
-	Git    *GitConfig   `yaml:"git,omitempty"`
-	Usage  *UsageConfig `yaml:"usage,omitempty"`
+	Git    *GitConfig    `yaml:"git,omitempty"`
+	Usage  *UsageConfig  `yaml:"usage,omitempty"`
+	Agents *AgentsConfig `yaml:"agents,omitempty"`
 }
 
 func loadRaw(baseDir string) (*rawConfig, error) {
@@ -42,7 +43,7 @@ func saveRaw(baseDir string, cfg *LoopConfig) error {
 		return err
 	}
 
-	raw := rawConfig{Config: cfg.Config, Git: &cfg.Git, Usage: &cfg.Usage}
+	raw := rawConfig{Config: cfg.Config, Git: &cfg.Git, Usage: &cfg.Usage, Agents: &cfg.Agents}
 	data, err := yaml.Marshal(raw)
 	if err != nil {
 		return err

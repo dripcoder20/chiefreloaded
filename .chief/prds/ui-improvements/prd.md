@@ -85,86 +85,92 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Automated tests verify sidebar ordering, divider presence, hover and focus visibility, touch visibility, target selection, action parity between both menus, dismissal, and keyboard access.
 
 ### US-005: Edit a PRD through an authoring session
+**Status:** done
 **Priority:** 5
 **Description:** As a user, I want Edit PRD to open a conversational editing session so that I can revise an existing PRD with an agent.
 
 **Acceptance Criteria:**
-- [ ] Selecting `Edit PRD` opens a dedicated authoring tab for the targeted PRD and starts or restores an editing session with the current PRD content available as context.
-- [ ] The editing tab is titled `Edit PRD` and is never titled `New PRD`.
-- [ ] The tab also identifies the targeted PRD within the tab content so two Edit PRD sessions can be distinguished.
-- [ ] The editing session uses the selected authoring agent for that session, defaulting to the configured authoring agent when no session-specific choice exists.
-- [ ] Changes are written only after the conversational workflow reaches its existing explicit save/confirmation point; merely opening Edit PRD does not modify the file.
-- [ ] Switching tabs preserves the editing session according to US-001.
-- [ ] If the PRD file is missing or unreadable, the application displays an actionable error and does not start an empty replacement PRD.
+- [x] Selecting `Edit PRD` opens a dedicated authoring tab for the targeted PRD and starts or restores an editing session with the current PRD content available as context.
+- [x] The editing tab is titled `Edit PRD` and is never titled `New PRD`.
+- [x] The tab also identifies the targeted PRD within the tab content so two Edit PRD sessions can be distinguished.
+- [x] The editing session uses the selected authoring agent for that session, defaulting to the configured authoring agent when no session-specific choice exists.
+- [x] Changes are written only after the conversational workflow reaches its existing explicit save/confirmation point; merely opening Edit PRD does not modify the file.
+- [x] Switching tabs preserves the editing session according to US-001.
+- [x] If the PRD file is missing or unreadable, the application displays an actionable error and does not start an empty replacement PRD.
 
 ### US-006: Delete or open a PRD markdown file from its action menu
+**Status:** done
 **Priority:** 6
 **Description:** As a user, I want to delete a PRD safely or open its markdown file in my default editor so that I can manage the PRD directly from the sidebar.
 
 **Acceptance Criteria:**
-- [ ] Selecting `Delete PRD` opens a confirmation dialog naming the targeted PRD before any file is removed.
-- [ ] Canceling the dialog leaves the PRD and its files unchanged.
-- [ ] Confirming deletion uses the application's existing PRD deletion semantics and removes the PRD from the sidebar only after deletion succeeds.
-- [ ] Deletion is blocked with a clear explanation while that PRD has an active authoring or implementation session; the application does not silently terminate either session.
-- [ ] A deletion failure displays an actionable error and leaves or restores the sidebar entry.
-- [ ] Selecting `Open markdown file` asks the operating system to open the targeted PRD `.md` file with the default application associated with markdown files.
-- [ ] `Open markdown file` does not start an Edit PRD authoring session or change the active tab in Loop.
-- [ ] If the operating system has no application associated with markdown files, the application displays an actionable error that identifies the targeted file.
-- [ ] A missing or unreadable markdown file produces an actionable error and does not open another file or directory.
+- [x] Selecting `Delete PRD` opens a confirmation dialog naming the targeted PRD before any file is removed.
+- [x] Canceling the dialog leaves the PRD and its files unchanged.
+- [x] Confirming deletion uses the application's existing PRD deletion semantics and removes the PRD from the sidebar only after deletion succeeds.
+- [x] Deletion is blocked with a clear explanation while that PRD has an active authoring or implementation session; the application does not silently terminate either session.
+- [x] A deletion failure displays an actionable error and leaves or restores the sidebar entry.
+- [x] Selecting `Open markdown file` asks the operating system to open the targeted PRD `.md` file with the default application associated with markdown files.
+- [x] `Open markdown file` does not start an Edit PRD authoring session or change the active tab in Loop.
+- [x] If the operating system has no application associated with markdown files, the application displays an actionable error that identifies the targeted file.
+- [x] A missing or unreadable markdown file produces an actionable error and does not open another file or directory.
 
 ### US-007: Select authoring and implementation agents
+**Status:** done
 **Priority:** 7
 **Description:** As a user, I want separate agent selectors for PRD authoring and implementation so that I can use the best agent for each phase.
 
 **Acceptance Criteria:**
-- [ ] The New PRD tab shows separate, clearly labeled `Authoring agent` and `Implementation agent` selectors before generation starts.
-- [ ] Each selector lists only installed and available agents supported for that phase.
-- [ ] The authoring selector defaults to the configured default authoring agent, and the implementation selector defaults to the configured default implementation agent; if only one general default exists, both initially use it.
-- [ ] Changing one selector does not change the other.
-- [ ] The chosen authoring agent is used when the PRD authoring session starts.
-- [ ] The chosen implementation agent is saved with the PRD and is preselected when implementation is started.
-- [ ] The implementation-start UI allows the user to change the implementation agent before confirming the run.
-- [ ] If a saved agent is no longer available, the UI reports that condition and requires a valid replacement before the affected phase can start.
+- [x] The New PRD tab shows separate, clearly labeled `Authoring agent` and `Implementation agent` selectors before generation starts.
+- [x] Each selector lists only installed and available agents supported for that phase.
+- [x] The authoring selector defaults to the configured default authoring agent, and the implementation selector defaults to the configured default implementation agent; if only one general default exists, both initially use it.
+- [x] Changing one selector does not change the other.
+- [x] The chosen authoring agent is used when the PRD authoring session starts.
+- [x] The chosen implementation agent is saved with the PRD and is preselected when implementation is started.
+- [x] The implementation-start UI allows the user to change the implementation agent before confirming the run.
+- [x] If a saved agent is no longer available, the UI reports that condition and requires a valid replacement before the affected phase can start.
 
 ### US-008: Configure PR and issue-publishing options
+**Status:** done
 **Priority:** 8
 **Description:** As a user, I want to choose a pull-request strategy and optional issue destination while creating a PRD so that its implementation workflow and external tracking are prepared from the start.
 
 **Acceptance Criteria:**
-- [ ] The New PRD tab includes a `Stack PR per user story` option that is off by default unless a saved application preference explicitly supplies another default.
-- [ ] The New PRD tab includes an issue-publishing choice with `Do not publish`, `Linear`, and `GitHub Issues` options.
-- [ ] Only destinations configured and authenticated for the current project are enabled; unavailable destinations explain what configuration is missing.
-- [ ] The chosen PR strategy and issue destination are visible for review before PRD generation begins.
-- [ ] The chosen PR strategy is saved as PRD workflow metadata and is available to the later implementation workflow; selecting it does not start implementation or create pull requests.
-- [ ] Selecting `Do not publish` causes PRD generation to perform no Linear or GitHub write operations.
-- [ ] Configuration and validation tests cover each option and missing integration credentials.
+- [x] The New PRD tab includes a `Stack PR per user story` option that is off by default unless a saved application preference explicitly supplies another default.
+- [x] The New PRD tab includes an issue-publishing choice with `Do not publish`, `Linear`, and `GitHub Issues` options.
+- [x] Only destinations configured and authenticated for the current project are enabled; unavailable destinations explain what configuration is missing.
+- [x] The chosen PR strategy and issue destination are visible for review before PRD generation begins.
+- [x] The chosen PR strategy is saved as PRD workflow metadata and is available to the later implementation workflow; selecting it does not start implementation or create pull requests.
+- [x] Selecting `Do not publish` causes PRD generation to perform no Linear or GitHub write operations.
+- [x] Configuration and validation tests cover each option and missing integration credentials.
 
 ### US-009: Publish generated user stories as issues and record references
+**Status:** done
 **Priority:** 9
 **Description:** As a user, I want generated user stories published to my selected tracker and linked back to the PRD so that the PRD and external work items remain traceable.
 
 **Acceptance Criteria:**
-- [ ] When Linear or GitHub Issues is selected, publishing begins only after the generated PRD has been successfully saved.
-- [ ] The system creates exactly one issue for each generated user story, using the story title and description and including its acceptance criteria.
-- [ ] Successfully created issues are not duplicated when publishing is retried after a partial failure; the system uses stored external references or an equivalent idempotency mechanism.
-- [ ] After each issue is created, the saved PRD user story records the destination, human-readable issue identifier, and clickable issue URL in a consistent `External Issue` metadata line.
-- [ ] The issue reference is attached to the matching user story and is not written to another story when responses complete out of order.
-- [ ] PRD file updates are atomic so an interrupted write does not corrupt or truncate the generated PRD.
-- [ ] A partial publishing failure reports which stories succeeded and failed, preserves references for successful stories, and offers a retry for failed stories only.
-- [ ] Closing or switching tabs while publishing is in progress does not cancel publishing; current progress is visible when the user returns.
-- [ ] Integration tests cover Linear, GitHub Issues, no-publish mode, partial failure, retry, duplicate prevention, and PRD reference persistence.
+- [x] When Linear or GitHub Issues is selected, publishing begins only after the generated PRD has been successfully saved.
+- [x] The system creates exactly one issue for each generated user story, using the story title and description and including its acceptance criteria.
+- [x] Successfully created issues are not duplicated when publishing is retried after a partial failure; the system uses stored external references or an equivalent idempotency mechanism.
+- [x] After each issue is created, the saved PRD user story records the destination, human-readable issue identifier, and clickable issue URL in a consistent `External Issue` metadata line.
+- [x] The issue reference is attached to the matching user story and is not written to another story when responses complete out of order.
+- [x] PRD file updates are atomic so an interrupted write does not corrupt or truncate the generated PRD.
+- [x] A partial publishing failure reports which stories succeeded and failed, preserves references for successful stories, and offers a retry for failed stories only.
+- [x] Closing or switching tabs while publishing is in progress does not cancel publishing; current progress is visible when the user returns.
+- [x] Integration tests cover Linear, GitHub Issues, no-publish mode, partial failure, retry, duplicate prevention, and PRD reference persistence.
 
 ### US-010: Document and verify the improved workflows
+**Status:** done
 **Priority:** 10
 **Description:** As a maintainer, I want workflow documentation and end-to-end coverage so that these UI improvements remain reliable across releases and platforms.
 
 **Acceptance Criteria:**
-- [ ] User documentation describes session persistence, `Shift+Enter`, File > New PRD, the PRD sidebar layout, repository launchers, three-dot and right-click actions, Edit PRD tab naming, both agent selectors, active-story agent and model indicators, stacked PRs, and issue publishing.
-- [ ] Documentation explains that issue publishing occurs after generation and that external issue references are written back into the PRD.
-- [ ] An end-to-end test creates a PRD with distinct authoring and implementation agents, switches tabs during authoring, uses multiline input, and verifies the preserved session.
-- [ ] An end-to-end test publishes multiple stories to a test tracker, verifies one external issue per story, and verifies the identifier and URL stored in each PRD story.
-- [ ] Platform-specific tests or test doubles cover native menu shortcuts, PRD action menus, opening markdown files with the operating system's default application, detecting supported local editors, and launching the repository with the correct path.
-- [ ] The project's formatting, type checking, unit tests, integration tests, and end-to-end tests pass.
+- [x] User documentation describes session persistence, `Shift+Enter`, File > New PRD, the PRD sidebar layout, repository launchers, three-dot and right-click actions, Edit PRD tab naming, both agent selectors, active-story agent and model indicators, stacked PRs, and issue publishing.
+- [x] Documentation explains that issue publishing occurs after generation and that external issue references are written back into the PRD.
+- [x] An end-to-end test creates a PRD with distinct authoring and implementation agents, switches tabs during authoring, uses multiline input, and verifies the preserved session.
+- [x] An end-to-end test publishes multiple stories to a test tracker, verifies one external issue per story, and verifies the identifier and URL stored in each PRD story.
+- [x] Platform-specific tests or test doubles cover native menu shortcuts, PRD action menus, opening markdown files with the operating system's default application, detecting supported local editors, and launching the repository with the correct path.
+- [x] The project's formatting, type checking, unit tests, integration tests, and end-to-end tests pass.
 
 ### US-011: Synchronize implementation controls with session state
 **Status:** done
@@ -186,40 +192,42 @@ For this PRD, a **PRD authoring session** is the live conversational agent proce
 - [x] Automated tests cover an initial Start failure followed by a successful retry, stale error-dialog cleanup, duplicate Start prevention, control availability for every session state, and failures during Pause, Resume, and Stop.
 
 ### US-012: Open the repository in GitHub or a local editor
+**Status:** done
 **Priority:** 12
 **Description:** As a user, I want repository-launch shortcuts in the PRD sidebar so that I can quickly open the current project on GitHub, in VS Code, or in a supported AI IDE.
 
 **Acceptance Criteria:**
-- [ ] A repository-launcher group appears at the top of the PRD sidebar near `New PRD` without interrupting the visual separation between New PRD and the existing PRD list.
-- [ ] The group contains a GitHub icon button, a VS Code icon button, and an AI IDE icon button.
-- [ ] Every icon button has a visible tooltip and an accessible name that describes its action; repository launchers are operable using only the keyboard.
-- [ ] Selecting the GitHub button opens the current repository's configured GitHub remote in the user's default web browser.
-- [ ] The GitHub remote is converted to a valid HTTPS repository page whether the configured remote uses an HTTPS or SSH Git URL.
-- [ ] If the project has no GitHub remote, has a malformed remote, or uses a non-GitHub host, the application displays an actionable alert explaining that no GitHub repository is configured and does not open an unrelated URL.
-- [ ] Selecting the VS Code button first checks whether VS Code is installed and, when available, opens the current repository root in VS Code.
-- [ ] Selecting the AI IDE button opens a dropdown containing `Claude`, `Cursor`, and `Codex`, regardless of which applications are installed.
-- [ ] Selecting Claude, Cursor, or Codex first checks whether that specific application is installed and, when available, opens the current repository root in that application.
-- [ ] If VS Code or the selected AI IDE is not installed, the application displays an alert naming the unavailable application and explaining that it must be installed before the repository can be opened there.
-- [ ] Dismissing an unavailable-application alert leaves Loop and the current repository state unchanged.
-- [ ] If an application is detected but launching it fails, the application displays an actionable launch-failure alert that is distinguishable from the not-installed alert.
-- [ ] Activating a launcher once results in at most one browser tab or application-launch request.
-- [ ] Automated tests cover GitHub HTTPS and SSH remotes, missing and non-GitHub remotes, installed and unavailable applications, launch failures, duplicate-event prevention, dropdown keyboard navigation, and correct repository-path forwarding.
+- [x] A repository-launcher group appears at the top of the PRD sidebar near `New PRD` without interrupting the visual separation between New PRD and the existing PRD list.
+- [x] The group contains a GitHub icon button, a VS Code icon button, and an AI IDE icon button.
+- [x] Every icon button has a visible tooltip and an accessible name that describes its action; repository launchers are operable using only the keyboard.
+- [x] Selecting the GitHub button opens the current repository's configured GitHub remote in the user's default web browser.
+- [x] The GitHub remote is converted to a valid HTTPS repository page whether the configured remote uses an HTTPS or SSH Git URL.
+- [x] If the project has no GitHub remote, has a malformed remote, or uses a non-GitHub host, the application displays an actionable alert explaining that no GitHub repository is configured and does not open an unrelated URL.
+- [x] Selecting the VS Code button first checks whether VS Code is installed and, when available, opens the current repository root in VS Code.
+- [x] Selecting the AI IDE button opens a dropdown containing `Claude`, `Cursor`, and `Codex`, regardless of which applications are installed.
+- [x] Selecting Claude, Cursor, or Codex first checks whether that specific application is installed and, when available, opens the current repository root in that application.
+- [x] If VS Code or the selected AI IDE is not installed, the application displays an alert naming the unavailable application and explaining that it must be installed before the repository can be opened there.
+- [x] Dismissing an unavailable-application alert leaves Loop and the current repository state unchanged.
+- [x] If an application is detected but launching it fails, the application displays an actionable launch-failure alert that is distinguishable from the not-installed alert.
+- [x] Activating a launcher once results in at most one browser tab or application-launch request.
+- [x] Automated tests cover GitHub HTTPS and SSH remotes, missing and non-GitHub remotes, installed and unavailable applications, launch failures, duplicate-event prevention, dropdown keyboard navigation, and correct repository-path forwarding.
 
 ### US-013: Display the active story's implementation agent and model
+**Status:** done
 **Priority:** 13
 **Description:** As a user, I want to see which agent and model are implementing an in-progress user story so that I can verify the execution configuration without leaving the PRD view.
 
 **Acceptance Criteria:**
-- [ ] When a user story enters an active implementation state, its visible story row or card displays an `Agent` value and a `Model` value.
-- [ ] The displayed values identify the agent and model actually assigned to the active implementation session, not merely the current application defaults or the values currently selected elsewhere in the UI.
-- [ ] Agent and model metadata remains visible while the story is starting, running, pausing, paused, resuming, or stopping.
-- [ ] If the implementation session exists but either value has not yet been resolved, the corresponding field displays `Resolving…` and does not show a potentially incorrect default.
-- [ ] If the session reports that an agent or model value is unavailable, the corresponding field displays `Unavailable` while preserving the other value when known.
-- [ ] A successful retry or restarted implementation updates the story to show the agent and model assigned to the new active session; delayed metadata from an earlier session cannot overwrite it.
-- [ ] Switching tabs, reopening the PRD, or remounting the story view restores the agent and model for any active implementation session.
-- [ ] When a story no longer has an active implementation session, the active Agent and Model indicator is removed from that story; this requirement does not add historical execution metadata.
-- [ ] Agent and model values are exposed as readable text, are available to assistive technology, and do not rely on icons, color, or tooltips alone.
-- [ ] Automated tests cover resolved, resolving, partially unavailable, paused, retried, restarted, remounted, and inactive story states, including protection from stale session metadata.
+- [x] When a user story enters an active implementation state, its visible story row or card displays an `Agent` value and a `Model` value.
+- [x] The displayed values identify the agent and model actually assigned to the active implementation session, not merely the current application defaults or the values currently selected elsewhere in the UI.
+- [x] Agent and model metadata remains visible while the story is starting, running, pausing, paused, resuming, or stopping.
+- [x] If the implementation session exists but either value has not yet been resolved, the corresponding field displays `Resolving…` and does not show a potentially incorrect default.
+- [x] If the session reports that an agent or model value is unavailable, the corresponding field displays `Unavailable` while preserving the other value when known.
+- [x] A successful retry or restarted implementation updates the story to show the agent and model assigned to the new active session; delayed metadata from an earlier session cannot overwrite it.
+- [x] Switching tabs, reopening the PRD, or remounting the story view restores the agent and model for any active implementation session.
+- [x] When a story no longer has an active implementation session, the active Agent and Model indicator is removed from that story; this requirement does not add historical execution metadata.
+- [x] Agent and model values are exposed as readable text, are available to assistive technology, and do not rely on icons, color, or tooltips alone.
+- [x] Automated tests cover resolved, resolving, partially unavailable, paused, retried, restarted, remounted, and inactive story states, including protection from stale session metadata.
 
 ## 4. Functional Requirements
 

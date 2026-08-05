@@ -4,7 +4,13 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { api, onAuthorData, onAuthorExit, type AuthorExit } from "../platform";
-  import { app, refresh, selectPrd } from "../stores/app.svelte";
+  import {
+    app,
+    publishIssues,
+    refresh,
+    savePrdWorkflow,
+    selectPrd,
+  } from "../stores/app.svelte";
   import { resolveTerminalKey } from "../lib/terminalInput";
 
   /**
@@ -37,12 +43,73 @@
   let sessionId = $state<string | null>(null);
   let name = $state("");
   let context = $state("");
+
+  /**
+   * The two agent selections, kept independent so changing one never moves the
+   * other: the best agent for a long interactive conversation is not
+   * necessarily the best one for a long unattended run.
+   *
+   * Both are initialised from the resolved phase defaults rather than left
+   * blank — a blank meaning "whatever is configured" tells the user nothing.
+   */
+  let authoringAgent = $state("");
+  let implementationAgent = $state("");
+  let stackPerStory = $state(false);
+  let issueDestination = $state("");
+
+  /**
+   * Only installed agents are offered. Listing one that is not on the machine
+   * turns a wrong choice into a failure at start time rather than at choice
+   * time, which is the harder failure to understand.
+   */
+  const installedAgents = $derived(
+    (app.environment?.agents ?? []).filter((a) => a.available).map((a) => a.name),
+  );
+
+  /**
+   * A saved or defaulted agent that is not installed. The selector shows it and
+   * blocks the phase until it is replaced, rather than silently substituting.
+   */
+  function isMissing(agent: string): boolean {
+    return agent !== "" && installedAgents.length > 0 && !installedAgents.includes(agent);
+  }
+
+  // Adopt the resolved defaults once they arrive, without overwriting a choice
+  // the user has already made.
+  $effect(() => {
+    const defaults = app.agentDefaults;
+    if (!defaults) return;
+    if (!authoringAgent) authoringAgent = defaults.authoring;
+    if (!implementationAgent) implementationAgent = defaults.implementation;
+  });
   let starting = $state(false);
   let result = $state<AuthorExit | null>(null);
   let error = $state<string | null>(null);
 
   const nameValid = $derived(/^[A-Za-z0-9_-]+$/.test(name));
   const running = $derived(sessionId !== null && sessionId !== "pending" && result === null);
+
+  /**
+   * The PRD this pane is editing, or null when it is creating one.
+   *
+   * Read from the store's authorTarget rather than selectedPrd: selecting a
+   * different PRD in the rail must not silently re-point a live editing session
+   * at another document.
+   */
+  const editing = $derived(app.authorTarget.kind === "edit" ? app.authorTarget.prd : null);
+
+  /**
+   * Choosing Edit PRD in the rail is the decision — the pane does not ask again.
+   * The guard is on the target, so returning to the tab or re-selecting the same
+   * PRD cannot start a second session for it.
+   */
+  let startedFor = $state<string | null>(null);
+  $effect(() => {
+    const target = editing;
+    if (!target || startedFor === target || sessionId) return;
+    startedFor = target;
+    void start("edit", target);
+  });
 
   function makeTerminal(): Terminal {
     const css = getComputedStyle(document.documentElement);
@@ -174,7 +241,7 @@
     term?.dispose();
   });
 
-  async function start(kind: "new" | "edit"): Promise<void> {
+  async function start(kind: "new" | "edit", prd?: string): Promise<void> {
     error = null;
     result = null;
     starting = true;
@@ -187,12 +254,24 @@
 
       const id = await api.author.start({
         kind,
-        prd: kind === "edit" ? (app.selectedPrd ?? "") : name,
+        prd: kind === "edit" ? (prd ?? editing ?? "") : name,
         context,
+        agent: authoringAgent,
         cols: term?.cols ?? 120,
         rows: term?.rows ?? 32,
       } as never);
       sessionId = id;
+
+      // The workflow choices are saved with the PRD as soon as it has a
+      // directory, so the later implementation run reads them back. Saving
+      // them starts nothing — no branch, no pull request, no tracker write.
+      if (kind === "new") {
+        await savePrdWorkflow(name, {
+          implementationAgent,
+          stackPerStory,
+          issueDestination,
+        } as never);
+      }
       term?.focus();
     } catch (err) {
       sessionId = null;
@@ -206,6 +285,26 @@
     if (sessionId) await api.author.stop(sessionId);
   }
 
+  /**
+   * Publishing is its own step, after the PRD has been saved. Switching tabs
+   * does not cancel it — the request is owned by the store, not this view — and
+   * the per-story outcome is on screen when the user comes back.
+   */
+  let publishing = $state(false);
+  const publishLabel = $derived(
+    publishing ? "Publishing…" : app.publishing?.failed?.length ? "Retry failed" : "Publish issues",
+  );
+
+  async function publish(prd: string): Promise<void> {
+    if (publishing) return;
+    publishing = true;
+    try {
+      await publishIssues(prd);
+    } finally {
+      publishing = false;
+    }
+  }
+
   function reset(): void {
     sessionId = null;
     result = null;
@@ -216,7 +315,23 @@
 </script>
 
 <div class="author" class:hidden={!active}>
-  {#if !sessionId}
+  {#if !sessionId && editing}
+    <!-- The edit session starts on its own; this is only reached when starting
+         it failed, so it explains what went wrong and offers a retry. -->
+    <div class="setup">
+      <h2>Edit {editing}</h2>
+      {#if error}
+        <p class="err">{error}</p>
+        <div class="actions">
+          <button class="primary" disabled={starting} onclick={() => start("edit", editing)}>
+            {starting ? "Starting…" : "Try again"}
+          </button>
+        </div>
+      {:else}
+        <p class="hint">Starting the editing session…</p>
+      {/if}
+    </div>
+  {:else if !sessionId}
     <div class="setup">
       <h2>Create a PRD</h2>
       <p class="hint">
@@ -247,8 +362,74 @@
         ></textarea>
       </label>
 
+      <!-- Options are grouped by phase, so which of them writes the PRD and
+           which of them implements it stays visually explicit. -->
+      <h3>Agents</h3>
+
+      <label>
+        <span>Authoring agent</span>
+        <select bind:value={authoringAgent} aria-describedby="authoring-help">
+          {#if isMissing(authoringAgent)}
+            <option value={authoringAgent}>{authoringAgent} (not installed)</option>
+          {/if}
+          {#each installedAgents as agent (agent)}
+            <option value={agent}>{agent}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="help" id="authoring-help">Writes this PRD with you, now.</p>
+      {#if isMissing(authoringAgent)}
+        <p class="err">{authoringAgent} is not installed. Choose another agent to start.</p>
+      {/if}
+
+      <label>
+        <span>Implementation agent</span>
+        <select bind:value={implementationAgent} aria-describedby="implementation-help">
+          {#if isMissing(implementationAgent)}
+            <option value={implementationAgent}>{implementationAgent} (not installed)</option>
+          {/if}
+          {#each installedAgents as agent (agent)}
+            <option value={agent}>{agent}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="help" id="implementation-help">
+        Executes the user stories later, when you start implementation. You can change it
+        then.
+      </p>
+
+      <h3>Implementation workflow</h3>
+
+      <label class="check">
+        <input type="checkbox" bind:checked={stackPerStory} />
+        <span class="check-label">Stack a pull request per user story</span>
+      </label>
+      <p class="help">
+        Saved with the PRD and applied when implementation starts. Choosing it creates no
+        branches or pull requests now.
+      </p>
+
+      <label>
+        <span>Publish issues to</span>
+        <select bind:value={issueDestination}>
+          <option value="">Do not publish</option>
+          {#each app.destinations as dest (dest.destination)}
+            <option value={dest.destination} disabled={!dest.available}>
+              {dest.name}{dest.available ? "" : " — unavailable"}
+            </option>
+          {/each}
+        </select>
+      </label>
+      {#each app.destinations.filter((d) => !d.available && d.reason) as dest (dest.destination)}
+        <p class="help">{dest.name}: {dest.reason}</p>
+      {/each}
+
       <div class="actions">
-        <button class="primary" disabled={!nameValid || starting} onclick={() => start("new")}>
+        <button
+          class="primary"
+          disabled={!nameValid || starting || isMissing(authoringAgent)}
+          onclick={() => start("new")}
+        >
           {starting ? "Starting…" : "Create"}
         </button>
         {#if app.selectedPrd}
@@ -276,10 +457,48 @@
         {/if}
         <button onclick={reset}>New session</button>
       </div>
+
+      <!-- Publishing runs only after the PRD is safely on disk. A tracker
+           outage therefore costs the links, never the PRD. -->
+      {#if result.outcome.created && issueDestination}
+        <div class="publish">
+          <div class="publish-head">
+            <strong>Issues</strong>
+            <button disabled={publishing} onclick={() => publish(result?.spec.prd ?? "")}>
+              {publishLabel}
+            </button>
+          </div>
+          {#if app.publishing}
+            <ul class="publish-list">
+              {#each app.publishing.results as r (r.storyId)}
+                <li>
+                  <span class="story-id tnum">{r.storyId}</span>
+                  {#if r.ref}
+                    <a href={r.ref.url} target="_blank" rel="noreferrer">{r.ref.identifier}</a>
+                    {#if r.skipped}<span class="note">already created</span>{/if}
+                  {:else}
+                    <span class="failed">{r.error ?? "not published"}</span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+            {#if app.publishing.failed?.length}
+              <p class="help">
+                Retrying attempts only the {app.publishing.failed.length} story{app.publishing
+                  .failed.length === 1
+                  ? ""
+                  : "s"} without an issue; the rest keep the issues they already have.
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/if}
     {:else if running}
       <div class="running-bar">
         <span class="dot"></span>
-        <span>Session live — type in the terminal.</span>
+        <!-- Naming the PRD here is what distinguishes two editing sessions from
+             one another; the tab title alone says only "Edit PRD". -->
+        <span>{editing ? `Editing ${editing}` : "Session live"} — type in the terminal.</span>
         <button onclick={stop}>Stop</button>
       </div>
     {/if}
@@ -302,6 +521,45 @@
   .setup {
     padding: 16px 18px;
     max-width: 620px;
+  }
+
+  h3 {
+    margin: 18px 0 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+  }
+
+  /* Helper text sits under its control, aligned with the field rather than the
+     label, so the phase each agent belongs to reads at a glance. */
+  .help {
+    margin: -4px 0 10px 162px;
+    font-size: 11.5px;
+    color: var(--fg-3);
+    max-width: 52ch;
+  }
+
+  select {
+    flex: 1;
+    padding: 5px 8px;
+    background: var(--bg-raised);
+    color: var(--fg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    font: inherit;
+  }
+
+  label.check {
+    align-items: center;
+  }
+  label.check input {
+    flex: none;
+    margin-left: 150px;
+  }
+  .check-label {
+    width: auto;
   }
 
   h2 {
@@ -379,6 +637,43 @@
     color: var(--danger);
     font-size: 12px;
     margin: 4px 0 0 162px;
+  }
+
+  .publish {
+    padding: 8px 14px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .publish-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .publish-head button {
+    margin-left: auto;
+  }
+  .publish-list {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+  }
+  .publish-list li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .story-id {
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+  }
+  /* A story that failed is called out per story, not as one verdict: the ones
+     that succeeded keep their issues and must not read as lost. */
+  .failed {
+    color: var(--warn);
+  }
+  .note {
+    color: var(--fg-3);
   }
 
   .term-wrap {

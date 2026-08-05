@@ -14,8 +14,16 @@ const store = vi.hoisted(() => ({
   requestNewPRD: vi.fn(),
   editPrd: vi.fn(),
   openPrdFile: vi.fn(),
-  deletePrd: vi.fn(),
+  confirmDeletePrd: vi.fn(),
+  openOnGitHub: vi.fn(),
+  openInApp: vi.fn(),
   app: {
+    localApps: [
+      { app: "vscode", name: "VS Code", available: true },
+      { app: "claude", name: "Claude", available: true },
+      { app: "cursor", name: "Cursor", available: false },
+      { app: "codex", name: "Codex", available: false },
+    ],
     prds: [
       { name: "checkout", completed: 1, total: 3 },
       { name: "docs-site", completed: 2, total: 6 },
@@ -153,7 +161,7 @@ describe("target selection", () => {
 
     const menu = await openContextMenu("docs-site");
     await fireEvent.click(within(menu).getByText("Delete PRD"));
-    expect(store.deletePrd).toHaveBeenCalledWith("docs-site");
+    expect(store.confirmDeletePrd).toHaveBeenCalledWith("docs-site");
   });
 
   it("wires each action to its store function", async () => {
@@ -226,5 +234,102 @@ describe("keyboard access", () => {
     const dots = dotsFor("checkout");
     expect(dots.tagName).toBe("BUTTON");
     expect(dots.getAttribute("aria-haspopup")).toBe("menu");
+  });
+});
+
+/**
+ * US-012 — the repository launchers: GitHub, VS Code and an AI IDE dropdown that
+ * always lists all three editors regardless of what is installed.
+ */
+describe("repository launchers", () => {
+  function launcher(label: string): HTMLButtonElement {
+    return document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+  }
+
+  it("puts the launcher group above the divider, with New PRD still first", () => {
+    render(PrdRail);
+    const rail = document.querySelector(".rail")!;
+    const order = [...rail.children].map((el) => el.className.split(" ")[0]);
+    expect(order.indexOf("new")).toBeLessThan(order.indexOf("launchers"));
+    expect(order.indexOf("launchers")).toBeLessThan(order.indexOf("divider"));
+  });
+
+  it("gives every launcher an accessible name and a tooltip", () => {
+    render(PrdRail);
+    for (const label of ["Open GitHub repository", "Open in VS Code", "Open in AI IDE"]) {
+      const button = launcher(label);
+      expect(button).toBeTruthy();
+      expect(button.tagName).toBe("BUTTON");
+      expect(button.getAttribute("title")).toBe(label);
+    }
+  });
+
+  it("opens the GitHub repository once per activation", async () => {
+    render(PrdRail);
+    await fireEvent.click(launcher("Open GitHub repository"));
+    expect(store.openOnGitHub).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards the VS Code launch to the store", async () => {
+    render(PrdRail);
+    await fireEvent.click(launcher("Open in VS Code"));
+    expect(store.openInApp).toHaveBeenCalledWith("vscode");
+  });
+
+  it("lists Claude, Cursor and Codex whether or not they are installed", async () => {
+    render(PrdRail);
+    await fireEvent.click(launcher("Open in AI IDE"));
+    await tick();
+    const menu = document.querySelector<HTMLElement>(
+      "[aria-label='Open the repository in an AI IDE']",
+    )!;
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent?.trim().split(/\s+/)[0])).toEqual([
+      "Claude",
+      "Cursor",
+      "Codex",
+    ]);
+  });
+
+  it("marks unavailable editors as secondary text but keeps them selectable", async () => {
+    render(PrdRail);
+    await fireEvent.click(launcher("Open in AI IDE"));
+    await tick();
+    const menu = document.querySelector<HTMLElement>(
+      "[aria-label='Open the repository in an AI IDE']",
+    )!;
+    const [claude, cursor] = within(menu).getAllByRole("menuitem");
+    expect(claude.textContent).not.toContain("not installed");
+    expect(cursor.textContent).toContain("not installed");
+    // Selectable is the point: activating it is what raises the alert naming
+    // the application to install.
+    expect(cursor.hasAttribute("disabled")).toBe(false);
+
+    await fireEvent.click(cursor);
+    expect(store.openInApp).toHaveBeenCalledWith("cursor");
+  });
+
+  it("navigates the AI IDE dropdown with arrow keys and dismisses on Escape", async () => {
+    render(PrdRail);
+    const trigger = launcher("Open in AI IDE");
+    await fireEvent.click(trigger);
+    await tick();
+    const menu = document.querySelector<HTMLElement>(
+      "[aria-label='Open the repository in an AI IDE']",
+    )!;
+    const items = within(menu).getAllByRole("menuitem");
+    expect(document.activeElement).toBe(items[0]);
+
+    await fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items[1]);
+    await fireEvent.keyDown(menu, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(items[0]);
+
+    await fireEvent.keyDown(menu, { key: "Escape" });
+    await tick();
+    expect(
+      document.querySelector("[aria-label='Open the repository in an AI IDE']"),
+    ).toBeNull();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 });

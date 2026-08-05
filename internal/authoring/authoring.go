@@ -47,6 +47,9 @@ type Spec struct {
 	// Context is what the user typed to describe what they want. Substituted
 	// into the prompt; may be empty, in which case the agent is told to ask.
 	Context string `json:"context,omitempty"`
+	// Agent overrides the configured authoring agent for this session. Empty
+	// means the configured default.
+	Agent string `json:"agent,omitempty"`
 	// Cols and Rows size the pseudo-terminal.
 	Cols int `json:"cols,omitempty"`
 	Rows int `json:"rows,omitempty"`

@@ -33,6 +33,7 @@ import (
 	"github.com/dripcoder/loop/internal/chief/agent"
 	"github.com/dripcoder/loop/internal/chief/config"
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
+	"github.com/dripcoder/loop/internal/tracker"
 )
 
 // Options configures a Session. The zero value is usable.
@@ -52,6 +53,9 @@ type Options struct {
 	// Provider overrides agent resolution entirely. Tests inject a scripted
 	// agent here; production leaves it nil and resolves from config.
 	Provider chiefloop.Provider
+	// Tracker overrides issue-tracker resolution. Tests publish against a fake
+	// rather than creating real issues in somebody's tracker.
+	Tracker func(IssueDestination) (tracker.Client, error)
 }
 
 // Session is a single opened project and everything running against it.
@@ -332,9 +336,21 @@ func (s *Session) PRDPath(name string) (string, error) {
 		return "", err
 	}
 	for _, p := range discoverPRDs(root) {
-		if p.Name == name {
-			return p.Path, nil
+		if p.Name != name {
+			continue
 		}
+		// The path is about to be handed to the operating system to open. A
+		// listed-but-missing file means the PRD was deleted or renamed outside
+		// Loop; opening its parent directory instead would be a surprising
+		// answer to "open this file".
+		info, err := os.Stat(p.Path)
+		if err != nil {
+			return "", fmt.Errorf("the markdown file for %q cannot be read (%s): %w", name, p.Path, err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("the markdown file for %q is a directory (%s)", name, p.Path)
+		}
+		return p.Path, nil
 	}
 	return "", fmt.Errorf("no PRD named %q", name)
 }
@@ -350,6 +366,10 @@ func (s *Session) DeletePRD(name string) error {
 		return err
 	}
 
+	if err := s.refuseDeleteWhileBusy(name); err != nil {
+		return err
+	}
+
 	dir, err := s.prdDirToDelete(root, name)
 	if err != nil {
 		return err
@@ -358,6 +378,31 @@ func (s *Session) DeletePRD(name string) error {
 		return err
 	}
 	return s.Rescan(context.Background())
+}
+
+// refuseDeleteWhileBusy blocks deletion while the PRD has an implementation or
+// authoring session attached.
+//
+// Deleting anyway would mean silently terminating work the user has running —
+// or worse, leaving an agent writing into a directory that no longer exists. The
+// honest answer is to say which session is in the way and let the user end it.
+func (s *Session) refuseDeleteWhileBusy(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, snap := range s.runs {
+		if snap.PRD == name && s.isRunActiveLocked(snap.ID) {
+			return fmt.Errorf(
+				"%q is being implemented. Stop the run before deleting it.", name)
+		}
+	}
+	for _, spec := range s.authorSpecs {
+		if spec.PRD == name {
+			return fmt.Errorf(
+				"%q has an authoring session open. Close that session before deleting it.", name)
+		}
+	}
+	return nil
 }
 
 // prdDirToDelete resolves the directory to remove for a PRD, guarding against

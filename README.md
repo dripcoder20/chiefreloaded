@@ -46,6 +46,16 @@ task e2e        # headless run against a scripted fake agent
 
 Run `task --list` for everything else.
 
+## Documentation
+
+- [docs/workflows.md](docs/workflows.md) — authoring sessions, the PRD sidebar
+  and its actions, repository launchers, per-phase agents, stacked pull
+  requests, and publishing user stories as Linear or GitHub issues.
+- [docs/usage.md](docs/usage.md) — what the token and cost figures mean, and
+  which fields each agent CLI actually reports.
+- [docs/parity.md](docs/parity.md) — feature checklist against the chief TUI.
+- [docs/design.md](docs/design.md) — why the code is shaped the way it is.
+
 ## Security note
 
 chief's agent providers all launch with permission checks disabled

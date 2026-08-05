@@ -63,7 +63,14 @@ func (s *Session) StartAuthoring(spec authoring.Spec) (string, error) {
 		return "", err
 	}
 
-	provider, err := s.resolveProvider("")
+	// The authoring phase has its own configured agent: the best agent for a long
+	// interactive conversation is not necessarily the best one for an unattended
+	// run. spec.Agent overrides it for this session only.
+	agentName := spec.Agent
+	if agentName == "" {
+		agentName = s.DefaultAuthoringAgent()
+	}
+	provider, err := s.resolveProvider(agentName)
 	if err != nil {
 		return "", err
 	}

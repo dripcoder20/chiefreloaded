@@ -6,6 +6,12 @@ import {
   onEvents,
   onMenuNewPRD,
   onReady,
+  type AgentDefaults,
+  type AppStatus,
+  type DestinationStatus,
+  type Environment,
+  type PRDWorkflow,
+  type PublishReport,
   type Settings,
   type LoopEvent,
   type PRDDetail,
@@ -67,6 +73,16 @@ export type {
   UsagePhase,
 } from "./usage";
 
+export {
+  isImplementing,
+  metaValue,
+  metaText,
+  storyMeta,
+  RESOLVING_LABEL,
+  UNAVAILABLE_LABEL,
+} from "./sessionMeta";
+export type { MetaValue, StoryMeta, SessionMetaRun } from "./sessionMeta";
+
 import type {
   UsageReport,
   UsageTotals,
@@ -96,6 +112,38 @@ class AppState {
    * reconnected event is idempotent.
    */
   usage = $state<UsageReport | null>(null);
+
+  /**
+   * What the authoring tab is for: writing a new PRD, or revising a named one.
+   *
+   * It is what the tab is titled from, so an editing session is never labelled
+   * `New PRD`, and what tells the pane which PRD to start an edit session
+   * against — independent of `selectedPrd`, which the rail changes for reasons
+   * that have nothing to do with the open session.
+   */
+  authorTarget = $state<{ kind: "new" } | { kind: "edit"; prd: string }>({ kind: "new" });
+
+  /** The PRD a delete confirmation is currently asking about, if any. */
+  pendingDelete = $state<string | null>(null);
+
+  /**
+   * The detected tooling, including which agent CLIs are installed. The agent
+   * selectors list only these: offering an agent that is not on the machine
+   * produces a failure at start time instead of at choice time.
+   */
+  environment = $state<Environment | null>(null);
+
+  /** The resolved per-phase agent defaults, for the New PRD selectors. */
+  agentDefaults = $state<AgentDefaults | null>(null);
+  /** Which issue trackers this project can publish to, and why not when it cannot. */
+  destinations = $state<DestinationStatus[]>([]);
+  /** The most recent publishing outcome, shown per story. */
+  publishing = $state<PublishReport | null>(null);
+
+  /** Which local editors are installed, for the repository launchers. */
+  localApps = $state<AppStatus[]>([]);
+  /** True while a repository launch is in flight, so one click launches once. */
+  launching = $state(false);
 
   /** Most recent agent output, for the status bar ticker. */
   activity = $state("");
@@ -222,6 +270,8 @@ export async function connect(): Promise<void> {
 
   setInterval(() => (app.now = Date.now()), 1000);
   await refresh();
+  void reloadLocalApps();
+  void reloadCreationOptions();
   app.connected = true;
 }
 
@@ -239,6 +289,7 @@ export async function refresh(): Promise<void> {
     app.runs = snap.runs ?? [];
     app.questions = snap.questions ?? [];
     app.usage = (snap as { usage?: UsageReport }).usage ?? null;
+    app.environment = snap.environment ?? null;
 
     if (!app.selectedPrd && app.prds.length > 0) {
       await selectPrd(app.prds[0].name);
@@ -276,6 +327,9 @@ function apply(ev: LoopEvent): void {
     case EventKind.EvRunStopped:
     case EventKind.EvRunComplete:
     case EventKind.EvRunError:
+    // A run whose state has not changed but whose metadata has — the agent
+    // resolving which model it is running.
+    case EventKind.EvRunUpdated:
       void reloadRuns();
       if (ev.kind === EventKind.EvRunError) app.error = ev.text ?? "the run failed";
       if (ev.kind === EventKind.EvRunComplete) app.activity = "complete";
@@ -352,16 +406,27 @@ async function reloadPrds(): Promise<void> {
  */
 export function requestNewPRD(): void {
   if (app.questions.length > 0) return;
+  app.authorTarget = { kind: "new" };
   app.view = "author";
 }
 
 /**
- * Open a PRD for editing: select it and reveal the authoring tab, from which an
- * edit session is started. Routed here from the PRD rail's action menus so the
- * action always targets the row it was opened on, not whatever was last selected.
+ * Open a PRD for conversational editing.
+ *
+ * The PRD is read first: a missing or unreadable one must produce an actionable
+ * error rather than opening an authoring tab that would go on to create an empty
+ * replacement. Routed here from the rail's action menus, so the target is always
+ * the row the menu was opened on, not whatever happens to be selected.
  */
 export async function editPrd(name: string): Promise<void> {
+  try {
+    await api.prd.get(name);
+  } catch (err) {
+    app.error = `${name} cannot be opened for editing: ${err}`;
+    return;
+  }
   await selectPrd(name);
+  app.authorTarget = { kind: "edit", prd: name };
   app.view = "author";
 }
 
@@ -375,10 +440,28 @@ export async function openPrdFile(name: string): Promise<void> {
 }
 
 /**
+ * Ask before deleting. Deletion removes a directory of work, so the action menu
+ * raises a dialog naming its target rather than acting on the click.
+ */
+export function confirmDeletePrd(name: string): void {
+  app.pendingDelete = name;
+}
+
+/** Dismiss the confirmation, leaving the PRD and its files untouched. */
+export function cancelDeletePrd(): void {
+  app.pendingDelete = null;
+}
+
+/**
  * Delete a PRD and everything under it. Clears the selection when the deleted
  * PRD was the selected one, so the rail does not point at a row that is gone.
+ *
+ * The rail entry is removed only after the backend confirms: a refused delete —
+ * the PRD is being implemented, or has an authoring session open — must leave
+ * the list exactly as it was, with the reason on screen.
  */
 export async function deletePrd(name: string): Promise<void> {
+  app.pendingDelete = null;
   try {
     await api.prd.delete(name);
     if (app.selectedPrd === name) {
@@ -388,6 +471,115 @@ export async function deletePrd(name: string): Promise<void> {
     await reloadPrds();
   } catch (err) {
     app.error = String(err);
+    // Re-read the authoritative list so a partially applied or refused delete
+    // cannot leave the rail disagreeing with what is on disk.
+    await reloadPrds();
+  }
+}
+
+/**
+ * Open the project's GitHub repository in the default browser.
+ *
+ * Resolving the remote is the Go side's job; a project with no GitHub remote
+ * comes back as an error and opens nothing rather than falling back to a URL
+ * that would point somewhere unrelated.
+ */
+export async function openOnGitHub(): Promise<void> {
+  if (app.launching) return;
+  app.launching = true;
+  try {
+    await api.project.openOnGitHub();
+  } catch (err) {
+    app.error = String(err);
+  } finally {
+    app.launching = false;
+  }
+}
+
+/**
+ * Open the repository root in a local editor.
+ *
+ * The guard is per activation rather than per app: overlapping UI and native
+ * events would otherwise launch the editor twice from one click.
+ */
+export async function openInApp(target: string): Promise<void> {
+  if (app.launching) return;
+  app.launching = true;
+  try {
+    await api.project.openInApp(target);
+  } catch (err) {
+    app.error = String(err);
+  } finally {
+    app.launching = false;
+  }
+}
+
+/**
+ * Load the resolved per-phase agent defaults and which trackers are configured.
+ *
+ * The defaults are resolved on the Go side so the selectors can show the actual
+ * agent rather than a blank that ambiguously means "whatever is configured".
+ */
+export async function reloadCreationOptions(): Promise<void> {
+  try {
+    app.agentDefaults = await api.project.agentDefaults();
+  } catch {
+    app.agentDefaults = null;
+  }
+  try {
+    app.destinations = await api.project.issueDestinations();
+  } catch {
+    app.destinations = [];
+  }
+}
+
+/**
+ * Save a PRD's workflow settings.
+ *
+ * This configures the later implementation run and nothing else: no branch, no
+ * pull request and no tracker write happens here.
+ */
+export async function savePrdWorkflow(name: string, workflow: PRDWorkflow): Promise<boolean> {
+  try {
+    await api.prd.saveWorkflow(name, workflow);
+    return true;
+  } catch (err) {
+    app.error = String(err);
+    return false;
+  }
+}
+
+/**
+ * Publish a PRD's user stories to the configured tracker.
+ *
+ * Reports per-story outcomes rather than one verdict: a partial failure must
+ * keep the references it did create and identify only the stories to retry.
+ */
+export async function publishIssues(name: string): Promise<PublishReport | null> {
+  try {
+    const report = await api.prd.publish(name);
+    app.publishing = report;
+    // Go marshals an empty slice as null, so a report with nothing in it is a
+    // valid shape rather than a missing field.
+    const total = report.results?.length ?? 0;
+    if (report.failed?.length) {
+      app.error = `${report.failed.length} of ${total} stories could not be published; retry to attempt only those.`;
+    }
+    return report;
+  } catch (err) {
+    app.error = String(err);
+    return null;
+  }
+}
+
+/** Load which editors are installed, for the AI IDE dropdown's secondary text. */
+export async function reloadLocalApps(): Promise<void> {
+  try {
+    app.localApps = await api.project.localApps();
+  } catch {
+    // Detection is advisory: a failure leaves the entries selectable, and
+    // activating one still produces the real, actionable error.
+    app.localApps = [];
   }
 }
 
@@ -429,7 +621,15 @@ export async function openProject(path: string): Promise<void> {
 
 // ------------------------------------------------------------------- runs --
 
-export async function startRun(): Promise<void> {
+/**
+ * Start implementing the selected PRD.
+ *
+ * `agent` overrides the PRD's saved implementation agent for this run only; the
+ * confirmation step passes it when the user changes their mind at the last
+ * moment. Without one, the Go side resolves the PRD's own choice and refuses if
+ * that agent has since been uninstalled rather than substituting another.
+ */
+export async function startRun(agent?: string): Promise<void> {
   const prd = app.selectedPrd;
   if (!prd) return;
   // At most one session per PRD: refuse while a Start (or any action) for this
@@ -442,7 +642,7 @@ export async function startRun(): Promise<void> {
   // Dismiss any stale start-error dialog for this PRD; a fresh failure re-sets it.
   app.error = null;
   try {
-    await api.run.start({ prd } as never);
+    await api.run.start({ prd, provider: agent || undefined } as never);
     await reloadRuns();
   } catch (err) {
     app.error = String(err);

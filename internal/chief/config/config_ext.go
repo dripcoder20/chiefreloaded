@@ -93,8 +93,40 @@ const DefaultBranchTemplate = "loop/{prd}/{story}-{slug}"
 // something chief no longer understands.
 type LoopConfig struct {
 	Config `yaml:",inline"`
-	Git    GitConfig   `yaml:"git"`
-	Usage  UsageConfig `yaml:"usage"`
+	Git    GitConfig    `yaml:"git"`
+	Usage  UsageConfig  `yaml:"usage"`
+	Agents AgentsConfig `yaml:"agents"`
+}
+
+// AgentsConfig holds the per-phase agent defaults.
+//
+// chief has one agent setting because it has one phase. Loop writes PRDs
+// conversationally and then implements them, and the best agent for a long
+// interactive conversation is not necessarily the best one for a long unattended
+// run. Either field may be empty, which means "fall back to agent.provider" —
+// that fallback is deliberate, so a project that has only ever set one agent
+// keeps working and both phases agree until the user says otherwise.
+type AgentsConfig struct {
+	Authoring      string `yaml:"authoring,omitempty"`
+	Implementation string `yaml:"implementation,omitempty"`
+}
+
+// AuthoringProvider resolves the agent for PRD authoring, falling back to the
+// general default.
+func (c *LoopConfig) AuthoringProvider() string {
+	if c.Agents.Authoring != "" {
+		return c.Agents.Authoring
+	}
+	return c.Agent.Provider
+}
+
+// ImplementationProvider resolves the agent for implementation runs, falling
+// back to the general default.
+func (c *LoopConfig) ImplementationProvider() string {
+	if c.Agents.Implementation != "" {
+		return c.Agents.Implementation
+	}
+	return c.Agent.Provider
 }
 
 // DefaultLoop returns the default Loop configuration.
@@ -144,6 +176,9 @@ func LoadLoop(baseDir string) (*LoopConfig, error) {
 	}
 	if raw != nil && raw.Usage != nil {
 		cfg.Usage = *raw.Usage
+	}
+	if raw != nil && raw.Agents != nil {
+		cfg.Agents = *raw.Agents
 	}
 	cfg.Normalise()
 	return cfg, nil

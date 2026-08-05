@@ -4,7 +4,9 @@
     adjustBudget,
     answerQuestion,
     app,
+    cancelDeletePrd,
     connect,
+    deletePrd,
     disconnect,
     pauseRun,
     resumeRun,
@@ -12,6 +14,7 @@
     startRun,
     stopRun,
   } from "./stores/app.svelte";
+  import { api } from "./platform";
   import PrdRail from "./shell/PrdRail.svelte";
   import Inspector from "./shell/Inspector.svelte";
   import StoryList from "./views/StoryList.svelte";
@@ -42,7 +45,34 @@
           ? "Resume"
           : "Start",
   );
+  // A conversational editing session is never labelled "New PRD" — the tab title
+  // follows what the pane is actually for.
+  const authorTabLabel = $derived(app.authorTarget.kind === "edit" ? "Edit PRD" : "New PRD");
+
   const pauseLabel = $derived(transitioning === "pausing" ? "Pausing…" : "Pause");
+
+  /**
+   * The agent this run will use. Seeded from the PRD's saved choice — resolved
+   * on the Go side, so it is the real agent rather than a default standing in
+   * for one — and changeable until Start is pressed.
+   */
+  let startAgent = $state("");
+  const installedAgents = $derived(
+    (app.environment?.agents ?? []).filter((a) => a.available).map((a) => a.name),
+  );
+
+  // Re-seed whenever the selected PRD changes, so the toolbar shows that PRD's
+  // agent rather than one carried over from the PRD looked at before it.
+  $effect(() => {
+    const prd = app.selectedPrd;
+    if (!prd) return;
+    void loadStartAgent(prd);
+  });
+
+  async function loadStartAgent(prd: string): Promise<void> {
+    const workflow = await api.prd.workflow(prd).catch(() => null);
+    startAgent = workflow?.implementationAgent || app.agentDefaults?.implementation || "";
+  }
   const stopLabel = $derived(transitioning === "stopping" ? "Stopping…" : "Stop");
 
   const elapsed = $derived.by(() => {
@@ -150,6 +180,22 @@
     </div>
   {/if}
 
+  {#if app.pendingDelete}
+    {@const target = app.pendingDelete}
+    <!-- Deleting removes a directory of work, so the dialog names its target and
+         nothing is touched until Delete is chosen. -->
+    <div class="question" role="alertdialog" aria-label="Delete PRD {target}">
+      <div>
+        <strong>Delete “{target}”?</strong>
+        <p>Its PRD, progress notes and agent logs are removed. This cannot be undone.</p>
+      </div>
+      <div class="options">
+        <button onclick={cancelDeletePrd}>Cancel</button>
+        <button class="destructive" onclick={() => deletePrd(target)}>Delete PRD</button>
+      </div>
+    </div>
+  {/if}
+
   {#if app.error}
     <div class="error" role="alert">
       {app.error}
@@ -178,8 +224,21 @@
 
         <span class="spacer"></span>
 
+        <!-- The implementation agent is changeable right up to the moment the
+             run is confirmed, which is the last point at which it still matters. -->
+        {#if app.canStart}
+          <label class="agent-pick">
+            <span class="sr-only">Implementation agent</span>
+            <select bind:value={startAgent} aria-label="Implementation agent">
+              {#each installedAgents as agent (agent)}
+                <option value={agent}>{agent}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+
         <button
-          onclick={() => (app.canResume ? resumeRun() : startRun())}
+          onclick={() => (app.canResume ? resumeRun() : startRun(startAgent))}
           disabled={!app.canStart && !app.canResume}
         >
           {startLabel}
@@ -199,7 +258,7 @@
           role="tab"
           aria-selected={app.view === "author"}
           class:on={app.view === "author"}
-          onclick={() => (app.view = "author")}>New PRD</button
+          onclick={() => (app.view = "author")}>{authorTabLabel}</button
         >
         <button
           role="tab"
@@ -386,6 +445,31 @@
   .git-warn {
     color: var(--warn);
     font-size: 12px;
+  }
+
+  /* Kept low-weight: it sits next to Start but must not compete with it. */
+  .agent-pick select {
+    padding: 3px 6px;
+    background: var(--bg-raised);
+    color: var(--fg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    font: inherit;
+    font-size: 11.5px;
+  }
+
+  /* Visually hidden but announced, so the control has a name without a visible
+     label crowding the toolbar. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .spacer {

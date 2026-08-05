@@ -19,7 +19,12 @@ import type { Spec as AuthorSpec } from "../../bindings/github.com/dripcoder/loo
 import type { Prompt } from "../../bindings/github.com/dripcoder/loop/internal/prompts/models";
 import { EventKind, LoopState } from "../../bindings/github.com/dripcoder/loop/internal/session/models";
 import type {
+  AgentDefaults,
+  AppStatus,
+  DestinationStatus,
   Environment,
+  PRDWorkflow,
+  PublishReport,
   Event as LoopEvent,
   PRDDetail,
   PRDSummary,
@@ -44,7 +49,12 @@ import {
 export { EventKind, LoopState };
 
 export type {
+  AgentDefaults,
+  AppStatus,
+  DestinationStatus,
   Environment,
+  PRDWorkflow,
+  PublishReport,
   LoopEvent,
   PRDDetail,
   PRDSummary,
@@ -159,6 +169,12 @@ const wailsApi = {
     getConfig: (): Promise<Settings> => ProjectService.GetConfig(),
     saveConfig: (v: Settings): Promise<void> => ProjectService.SaveConfig(v),
     rescan: (): Promise<void> => ProjectService.Rescan(),
+    localApps: (): Promise<AppStatus[]> => list(ProjectService.LocalApps()),
+    agentDefaults: (): Promise<AgentDefaults> => ProjectService.AgentDefaults(),
+    issueDestinations: (): Promise<DestinationStatus[]> =>
+      list(ProjectService.IssueDestinations()),
+    openInApp: (app: string): Promise<void> => ProjectService.OpenInApp(app),
+    openOnGitHub: (): Promise<void> => ProjectService.OpenOnGitHub(),
   },
   prd: {
     list: (): Promise<PRDSummary[]> => list(PRDService.List()),
@@ -166,6 +182,11 @@ const wailsApi = {
     progress: (name: string) => PRDService.Progress(name),
     openFile: (name: string): Promise<void> => PRDService.OpenFile(name),
     delete: (name: string): Promise<void> => PRDService.Delete(name),
+    workflow: (name: string): Promise<PRDWorkflow> => PRDService.Workflow(name),
+    saveWorkflow: (name: string, w: PRDWorkflow): Promise<void> =>
+      PRDService.SaveWorkflow(name, w),
+    issues: (name: string) => PRDService.Issues(name),
+    publish: (name: string): Promise<PublishReport> => PRDService.Publish(name),
   },
   run: {
     start: (req: StartRequest): Promise<string> => RunService.Start(req),
