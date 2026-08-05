@@ -23,6 +23,7 @@ import type {
   AppStatus,
   DestinationStatus,
   Environment,
+  NewPRDRequest,
   PRDWorkflow,
   PublishReport,
   Event as LoopEvent,
@@ -53,6 +54,7 @@ export type {
   AppStatus,
   DestinationStatus,
   Environment,
+  NewPRDRequest,
   PRDWorkflow,
   PublishReport,
   LoopEvent,
@@ -195,6 +197,7 @@ const wailsApi = {
     get: (name: string): Promise<PRDDetail> => PRDService.Get(name),
     progress: (name: string) => PRDService.Progress(name),
     openFile: (name: string): Promise<void> => PRDService.OpenFile(name),
+    create: (req: NewPRDRequest): Promise<PRDSummary> => PRDService.Create(req),
     delete: (name: string): Promise<void> => PRDService.Delete(name),
     workflow: (name: string): Promise<PRDWorkflow> => PRDService.Workflow(name),
     saveWorkflow: (name: string, w: PRDWorkflow): Promise<void> =>

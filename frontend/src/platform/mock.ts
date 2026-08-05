@@ -722,6 +722,17 @@ export const mockApi = {
       }) as PRDDetail,
     progress: async () => ({}) as never,
     openFile: async (): Promise<void> => {},
+    create: async (req: { name: string }) =>
+      ({
+        name: req.name,
+        path: `/Users/you/Code/checkout/.chief/prds/${req.name}/prd.md`,
+        title: req.name,
+        total: 0,
+        completed: 0,
+        inProgress: 0,
+        legacy: false,
+        state: LoopState.StateIdle,
+      }) as never,
     delete: async (): Promise<void> => {},
     workflow: async () => mockWorkflow as never,
     saveWorkflow: async (_name: string, w: unknown): Promise<void> => {

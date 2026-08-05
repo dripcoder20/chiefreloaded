@@ -129,6 +129,12 @@ func (p *PRDService) OpenFile(name string) error {
 	return app.Browser.OpenFile(path)
 }
 
+// Create writes a new PRD and returns its summary, so the caller can select it
+// without waiting for a rescan.
+func (p *PRDService) Create(req session.NewPRDRequest) (session.PRDSummary, error) {
+	return p.s.CreatePRD(context.Background(), req)
+}
+
 // Delete removes a PRD directory and everything in it.
 func (p *PRDService) Delete(name string) error { return p.s.DeletePRD(name) }
 
