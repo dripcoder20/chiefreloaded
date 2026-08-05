@@ -4,13 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { api, onAuthorData, onAuthorExit, type AuthorExit } from "../platform";
-  import {
-    app,
-    publishIssues,
-    refresh,
-    savePrdWorkflow,
-    selectPrd,
-  } from "../stores/app.svelte";
+  import { app, publishIssues, refresh, selectPrd } from "../stores/app.svelte";
   import { errorMessage } from "../stores/errors";
   import { resolveTerminalKey } from "../lib/terminalInput";
 
@@ -42,52 +36,18 @@
   let unsubscribe: Array<() => void> = [];
 
   let sessionId = $state<string | null>(null);
-  let name = $state("");
-  let context = $state("");
-
-  /**
-   * The two agent selections, kept independent so changing one never moves the
-   * other: the best agent for a long interactive conversation is not
-   * necessarily the best one for a long unattended run.
-   *
-   * Both are initialised from the resolved phase defaults rather than left
-   * blank — a blank meaning "whatever is configured" tells the user nothing.
-   */
-  let authoringAgent = $state("");
-  let implementationAgent = $state("");
-  let stackPerStory = $state(false);
-  let issueDestination = $state("");
-
-  /**
-   * Only installed agents are offered. Listing one that is not on the machine
-   * turns a wrong choice into a failure at start time rather than at choice
-   * time, which is the harder failure to understand.
-   */
-  const installedAgents = $derived(
-    (app.environment?.agents ?? []).filter((a) => a.available).map((a) => a.name),
-  );
-
-  /**
-   * A saved or defaulted agent that is not installed. The selector shows it and
-   * blocks the phase until it is replaced, rather than silently substituting.
-   */
-  function isMissing(agent: string): boolean {
-    return agent !== "" && installedAgents.length > 0 && !installedAgents.includes(agent);
-  }
-
-  // Adopt the resolved defaults once they arrive, without overwriting a choice
-  // the user has already made.
-  $effect(() => {
-    const defaults = app.agentDefaults;
-    if (!defaults) return;
-    if (!authoringAgent) authoringAgent = defaults.authoring;
-    if (!implementationAgent) implementationAgent = defaults.implementation;
-  });
   let starting = $state(false);
   let result = $state<AuthorExit | null>(null);
   let error = $state<string | null>(null);
 
-  const nameValid = $derived(/^[A-Za-z0-9_-]+$/.test(name));
+  /**
+   * Where this PRD publishes its stories, read from its own workflow settings.
+   * The pane no longer chooses it — that moved to the New PRD dialog and to PRD
+   * Settings — but it still decides whether publishing is offered once the
+   * document has been written.
+   */
+  let issueDestination = $state("");
+
   const running = $derived(sessionId !== null && sessionId !== "pending" && result === null);
 
   /**
@@ -106,14 +66,34 @@
    * Choosing Edit PRD in the rail is the decision — the pane does not ask again.
    * The guard is on the target, so returning to the tab or re-selecting the same
    * PRD cannot start a second session for it.
+   *
+   * start() owns this rather than the effect, so that clearing it is enough to
+   * make the pane willing to open a second conversation for the same PRD.
    */
   let startedFor = $state<string | null>(null);
   $effect(() => {
     const prd = conversationPrd;
     if (!prd || startedFor === prd || sessionId) return;
-    startedFor = prd;
     void start(target?.kind ?? "new", prd);
   });
+
+  // Follow the selection, so publishing is offered against this PRD's own
+  // settings rather than those of the one looked at before it.
+  $effect(() => {
+    const prd = conversationPrd;
+    issueDestination = "";
+    if (prd) void loadDestination(prd);
+  });
+
+  async function loadDestination(prd: string): Promise<void> {
+    try {
+      const workflow = await api.prd.workflow(prd);
+      if (conversationPrd === prd) issueDestination = workflow?.issueDestination ?? "";
+    } catch {
+      // Publishing is an extra; not knowing where to publish must not disturb
+      // the conversation itself.
+    }
+  }
 
   function makeTerminal(): Terminal {
     const css = getComputedStyle(document.documentElement);
@@ -246,6 +226,8 @@
   });
 
   async function start(kind: "new" | "edit", prd?: string): Promise<void> {
+    if (starting) return;
+    startedFor = prd ?? conversationPrd ?? null;
     error = null;
     result = null;
     starting = true;
@@ -297,12 +279,25 @@
     }
   }
 
+  /**
+   * Opens a fresh conversation for the same PRD.
+   *
+   * startedFor has to be released along with the session id. It is what stops
+   * the effect above from opening a second agent for a PRD that already has
+   * one, and leaving it set was enough to strand the pane on "Starting the
+   * conversation…" with nothing actually starting — the state you landed in
+   * after stopping a session part-way through.
+   */
   function reset(): void {
+    // A conversation that produced stories has left a real PRD behind, so the
+    // next one revises it. Starting another `new` session against it would be
+    // refused, and rightly — its prompt writes the document from scratch.
+    const kind = (result?.outcome.stories ?? 0) > 0 ? "edit" : (target?.kind ?? "new");
     sessionId = null;
     result = null;
-    name = "";
-    context = "";
+    startedFor = null;
     term?.clear();
+    void start(kind, conversationPrd ?? undefined);
   }
 </script>
 
@@ -312,19 +307,22 @@
          it failed, so it explains what went wrong and offers a retry. -->
     <div class="setup">
       <h2>{editing ? `Edit ${editing}` : conversationPrd}</h2>
-      {#if error}
-        <p class="err">{error}</p>
+      {#if starting}
+        <p class="hint">Starting the conversation…</p>
+      {:else}
+        <!-- Reached when a start failed, and after a session has been released.
+             Either way there is no conversation and the way back to one is a
+             button, never a message that implies something is happening. -->
+        {#if error}
+          <p class="err">{error}</p>
+        {:else}
+          <p class="hint">This PRD has no conversation open.</p>
+        {/if}
         <div class="actions">
-          <button
-            class="primary"
-            disabled={starting}
-            onclick={() => start(target?.kind ?? "new", conversationPrd)}
-          >
-            {starting ? "Starting…" : "Try again"}
+          <button class="primary" onclick={() => start(target?.kind ?? "new", conversationPrd)}>
+            {error ? "Try again" : "Start the conversation"}
           </button>
         </div>
-      {:else}
-        <p class="hint">Starting the conversation…</p>
       {/if}
     </div>
   {/if}
@@ -427,7 +425,7 @@
   .actions {
     display: flex;
     gap: 8px;
-    margin: 14px 0 0 162px;
+    margin: 14px 0 0;
   }
 
   button {
@@ -454,7 +452,7 @@
   .err {
     color: var(--danger);
     font-size: 12px;
-    margin: 4px 0 0 162px;
+    margin: 4px 0 0;
   }
 
   .publish {

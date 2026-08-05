@@ -13,6 +13,7 @@
     pickProject,
     editPrd,
     closeNewPRD,
+    requestNewPRD,
     toggleSettings,
     closeSettings,
     startRun,
@@ -51,20 +52,39 @@
           ? "Resume"
           : "Start",
   );
-  // A conversational editing session is never labelled "New PRD" — the tab title
-  // follows what the pane is actually for.
-  const authorTabLabel = $derived(app.authorTarget?.kind === "edit" ? "Edit PRD" : "Writing");
-
   /**
-   * The conversation belongs to a PRD, so its tab shows only for that one.
-   * Switching PRDs in the sidebar leaves the session running — it is just no
-   * longer the thing on screen.
+   * The conversation belongs to a PRD, so a session is only "open" here while
+   * its own PRD is the selected one. Switching PRDs in the sidebar leaves the
+   * session running — it is just no longer the thing on screen.
    */
   const conversationOpen = $derived(
     app.authorTarget !== null && app.authorTarget.prd === app.selectedPrd,
   );
 
-  // A tab that vanishes must not leave the pane showing nothing.
+  /**
+   * The third tab is the PRD's document: "Writing" while an agent is drafting a
+   * brand-new one, "Edit PRD" otherwise. It replaced a separate Update PRD
+   * button, which was a second control for the same destination — and one that
+   * looked like an action with consequences rather than a place to go.
+   */
+  const authorTabLabel = $derived(
+    conversationOpen && app.authorTarget?.kind === "new" ? "Writing" : "Edit PRD",
+  );
+
+  // Opening the tab is what starts an editing conversation, when there isn't
+  // already one for this PRD. The pane does the rest on its own.
+  function openConversation(): void {
+    const prd = app.selectedPrd;
+    if (!prd) return;
+    // editPrd switches the view itself, once the PRD has been read. Doing it
+    // here as well would show the tab as selected for a frame before the effect
+    // below bounced it back for having no conversation yet.
+    if (!conversationOpen) return void editPrd(prd);
+    app.view = "author";
+  }
+
+  // Selecting another PRD leaves this tab pointed at a conversation that is no
+  // longer on screen; showing that PRD's stories is the honest fallback.
   $effect(() => {
     if (app.view === "author" && !conversationOpen) app.view = "stories";
   });
@@ -291,19 +311,13 @@
           class:on={app.view === "prd-settings"}
           onclick={() => (app.view = "prd-settings")}>PRD Settings</button
         >
-        {#if conversationOpen}
+        {#if app.selectedPrd}
           <button
             role="tab"
             aria-selected={app.view === "author"}
             class:on={app.view === "author"}
-            onclick={() => (app.view = "author")}>{authorTabLabel}</button
+            onclick={openConversation}>{authorTabLabel}</button
           >
-        {/if}
-
-        <span class="tab-spacer"></span>
-
-        {#if app.selectedPrd}
-          <button class="update" onclick={() => editPrd(app.selectedPrd!)}>Update PRD</button>
         {/if}
       </div>
 
@@ -331,7 +345,7 @@
                 Loop opens the directory it was launched from.
               </p>
               <div class="blank-actions">
-                <button class="primary" onclick={() => (app.view = "author")}>Create a PRD</button>
+                <button class="primary" onclick={requestNewPRD}>Create a PRD</button>
                 <button onclick={pickProject}>Choose a project…</button>
               </div>
             </div>
@@ -513,28 +527,6 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
-  }
-
-  .tab-spacer {
-    flex: 1;
-  }
-
-  /* Right-aligned in the strip: it acts on the PRD the tabs are about, but it
-     is an action rather than another view of it. */
-  .update {
-    margin: 0 8px;
-    padding: 2px 10px;
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    color: var(--fg-2);
-    font: inherit;
-    font-size: 11.5px;
-    cursor: default;
-  }
-  .update:hover {
-    color: var(--fg-1);
-    border-color: var(--fg-3);
   }
 
   .spacer {

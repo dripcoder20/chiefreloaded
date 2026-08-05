@@ -39,7 +39,9 @@ function labelled(text: string): HTMLSelectElement {
   return label!.querySelector("select")!;
 }
 
-function nameField(view: ReturnType<typeof render>): HTMLInputElement {
+// Typed structurally rather than as RenderResult: testing-library's generic
+// render result does not narrow to the parameter type its own helpers expect.
+function nameField(view: { getByPlaceholderText: (text: string) => HTMLElement }): HTMLInputElement {
   return view.getByPlaceholderText("secondary-email") as HTMLInputElement;
 }
 

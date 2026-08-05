@@ -48,6 +48,7 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("../platform", () => ({
   api: {
+    prd: { workflow: vi.fn().mockResolvedValue({ issueDestination: "" }) },
     author: {
       start: bridge.start,
       write: bridge.write,
@@ -333,5 +334,47 @@ describe("edit sessions", () => {
     render(AuthorPane, { props: { active: true } });
     await waitFor(() => {});
     expect(bridge.start).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Ending a session must not be a one-way door. The pane guards against opening
+ * a second agent for a PRD that already has one, and that guard used to outlive
+ * the session it was protecting — leaving "Starting the conversation…" on
+ * screen with nothing starting, and no way back without restarting the app.
+ */
+describe("starting a second conversation", () => {
+  it("opens a new session after the first one is stopped", async () => {
+    const view = await startSession("new", "checkout");
+    await endSession({ created: true, parsed: true, stories: 0 });
+
+    await fireEvent.click(view.getByRole("button", { name: "New session" }));
+
+    await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(2));
+    expect(bridge.start.mock.calls[1][0]).toMatchObject({ prd: "checkout" });
+  });
+
+  // A conversation that wrote stories leaves a real PRD behind; a second `new`
+  // session would be refused for exactly that reason, so the next one revises.
+  it("revises rather than rewrites once stories exist", async () => {
+    const view = await startSession("new", "checkout");
+    await endSession({ created: true, parsed: true, stories: 3 });
+
+    await fireEvent.click(view.getByRole("button", { name: "New session" }));
+
+    await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(2));
+    expect(bridge.start.mock.calls[1][0]).toMatchObject({ kind: "edit", prd: "checkout" });
+  });
+
+  // Whatever leaves the pane without a session, the way out is a control the
+  // user can press — never a message implying something is already happening.
+  it("offers a start button when no session is running", async () => {
+    bridge.start.mockRejectedValue(new Error("boom"));
+    store.app.authorTarget = { kind: "edit", prd: "checkout" };
+
+    const view = render(AuthorPane, { props: { active: true } });
+
+    await waitFor(() => expect(view.getByRole("button", { name: "Try again" })).toBeTruthy());
+    expect(view.queryByText(/Starting the conversation/)).toBeNull();
   });
 });
