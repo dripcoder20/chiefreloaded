@@ -56,6 +56,84 @@ type prdMetaEnvelope struct {
 	// the idempotency key: a retry after a partial failure consults this rather
 	// than creating a second issue for a story that already has one.
 	Issues map[string]IssueRef `json:"issues,omitempty"`
+	// Git records what runs have actually done with branches and pull requests.
+	Git PRDGitState `json:"git,omitempty"`
+}
+
+// PRDGitState is what a PRD's runs have put into git.
+//
+// Branch names look derivable — branchName is a pure function of the template,
+// the PRD and the story — but only until the template changes or the user edits
+// the suggested branch at the safety question. What a run actually used is the
+// only thing that stays true, so it is recorded rather than recomputed.
+type PRDGitState struct {
+	// Branch is the PRD's own run branch, in per-PRD mode.
+	Branch string `json:"branch,omitempty"`
+	// Stories maps a story ID to the branch its commit landed on.
+	Stories map[string]string `json:"stories,omitempty"`
+	// PullRequests caches the last pull request seen for a branch, keyed by
+	// branch name. GitHub remains the source of truth; this exists so the links
+	// still render when gh is missing, unauthenticated or offline, and every
+	// entry carries when it was last confirmed so a stale state is never
+	// presented as a live one.
+	PullRequests map[string]PRRef `json:"pullRequests,omitempty"`
+}
+
+// recordBranch stores the branch a run used, for the PRD as a whole when storyID
+// is empty, or for one story.
+//
+// Written as it happens rather than at the end of a run: a run that is stopped
+// or crashes has still created the branch, and a UI that cannot name it leaves
+// the user hunting through `git branch` for their own work.
+func (s *Session) recordBranch(prd, storyID, branch string) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		if storyID == "" {
+			env.Git.Branch = branch
+			return
+		}
+		if env.Git.Stories == nil {
+			env.Git.Stories = map[string]string{}
+		}
+		env.Git.Stories[storyID] = branch
+	})
+}
+
+// recordPullRequest caches a pull request against its head branch.
+func (s *Session) recordPullRequest(prd, branch string, ref PRRef) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		if env.Git.PullRequests == nil {
+			env.Git.PullRequests = map[string]PRRef{}
+		}
+		env.Git.PullRequests[branch] = ref
+	})
+}
+
+// updatePRDMeta applies a change to a PRD's sidecar as a read-modify-write.
+func (s *Session) updatePRDMeta(prd string, change func(*prdMetaEnvelope)) error {
+	path, err := s.prdMetaPath(prd)
+	if err != nil {
+		return err
+	}
+	env, err := loadPRDMeta(path)
+	if err != nil {
+		return err
+	}
+	change(&env)
+	return savePRDMeta(path, env)
+}
+
+// PRDGitFor returns the branches and cached pull requests recorded for a PRD.
+// A PRD that has never run has none, which is not an error.
+func (s *Session) PRDGitFor(name string) (PRDGitState, error) {
+	path, err := s.prdMetaPath(name)
+	if err != nil {
+		return PRDGitState{}, err
+	}
+	env, err := loadPRDMeta(path)
+	if err != nil {
+		return PRDGitState{}, err
+	}
+	return env.Git, nil
 }
 
 // IssueRef is an external issue created for one user story.

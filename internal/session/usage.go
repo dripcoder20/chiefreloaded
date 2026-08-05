@@ -239,6 +239,14 @@ type StoryUsage struct {
 	StoryID  string      `json:"storyId"`
 	Attempts int         `json:"attempts"`
 	Totals   UsageTotals `json:"totals"`
+
+	// StartedAt and EndedAt bound the period this story spent tokens, in unix
+	// milliseconds. First usage to last, not wall clock: the agent's work before
+	// it reports anything is not counted, and a story that reported usage once
+	// has both equal. They are here because they are the only story timing that
+	// outlives the process — the run's own timings are in memory.
+	StartedAt int64 `json:"startedAt,omitempty"`
+	EndedAt   int64 `json:"endedAt,omitempty"`
 }
 
 // SessionUsage is one retained session (run) as the history list shows it: enough
@@ -323,6 +331,7 @@ type runAccum struct {
 	endedAt    int64
 	storyOrder []string
 	attempts   map[string]map[int]struct{}
+	spans      map[string]*span
 }
 
 // noteRunMeta folds one record into its run's metadata, starting a new run entry
@@ -344,7 +353,7 @@ func noteRunMeta(meta map[string]*runAccum, order []string, rec UsageRecord) []s
 		ra.endedAt = rec.At
 	}
 	if rec.StoryID != "" {
-		ra.noteStory(rec.StoryID, rec.Attempt)
+		ra.noteStory(rec.StoryID, rec.Attempt, rec.At)
 	}
 	return order
 }
@@ -352,7 +361,7 @@ func noteRunMeta(meta map[string]*runAccum, order []string, rec UsageRecord) []s
 // noteStory records a story (in first-seen order) and the attempt number that
 // produced this record, so the story's attempt count is the number of distinct
 // attempts that spent tokens on it.
-func (ra *runAccum) noteStory(storyID string, attempt int) {
+func (ra *runAccum) noteStory(storyID string, attempt int, at int64) {
 	set := ra.attempts[storyID]
 	if set == nil {
 		set = make(map[int]struct{})
@@ -360,7 +369,39 @@ func (ra *runAccum) noteStory(storyID string, attempt int) {
 		ra.storyOrder = append(ra.storyOrder, storyID)
 	}
 	set[attempt] = struct{}{}
+	ra.noteStorySpan(storyID, at)
 }
+
+// noteStorySpan widens the window a story spent tokens in.
+//
+// This is how long a story took, as far as anything durable knows. The run's own
+// per-story timings live in memory and die with the process, while usage records
+// are persisted — so a summary that has to survive a restart is built from these.
+// It measures first token to last, which excludes whatever the agent did before
+// it reported any usage; close enough to be useful, and not the same as wall
+// clock, which is why the read model names it a span rather than a duration.
+func (ra *runAccum) noteStorySpan(storyID string, at int64) {
+	if at <= 0 {
+		return
+	}
+	if ra.spans == nil {
+		ra.spans = map[string]*span{}
+	}
+	s := ra.spans[storyID]
+	if s == nil {
+		ra.spans[storyID] = &span{first: at, last: at}
+		return
+	}
+	if at < s.first {
+		s.first = at
+	}
+	if at > s.last {
+		s.last = at
+	}
+}
+
+// span is the first and last moment a scope was seen, in unix milliseconds.
+type span struct{ first, last int64 }
 
 // assembleSessions turns the collected metadata into the session history, newest
 // first. The dominant provider/model comes from the run's largest usage group so
@@ -397,11 +438,15 @@ func assembleSessions(
 func storiesOf(runID string, ra *runAccum, stories map[string]UsageTotals) []StoryUsage {
 	out := make([]StoryUsage, 0, len(ra.storyOrder))
 	for _, storyID := range ra.storyOrder {
-		out = append(out, StoryUsage{
+		story := StoryUsage{
 			StoryID:  storyID,
 			Attempts: len(ra.attempts[storyID]),
 			Totals:   stories[storyScopeKey(runID, storyID)],
-		})
+		}
+		if s := ra.spans[storyID]; s != nil {
+			story.StartedAt, story.EndedAt = s.first, s.last
+		}
+		out = append(out, story)
 	}
 	return out
 }

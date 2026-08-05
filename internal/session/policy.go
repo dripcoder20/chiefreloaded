@@ -28,6 +28,11 @@ import (
 // impossible. The worktree path has always adopted an existing worktree; this
 // is the same courtesy for branches.
 func (s *Session) ensureRunBranch(ctx context.Context, root, prdName, branch string) error {
+	// Recorded whether or not the branch had to be created: adopting an existing
+	// one is the ordinary resumed-run case, and the PRD still belongs to it.
+	// A sidecar that cannot be written is not worth failing a run over.
+	_ = s.recordBranch(prdName, "", branch)
+
 	if currentBranch(ctx, root) == branch {
 		return nil
 	}

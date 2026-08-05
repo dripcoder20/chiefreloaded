@@ -159,6 +159,19 @@ func (p *PRDService) SaveWorkflow(name string, w session.PRDWorkflow) error {
 	return p.s.SavePRDWorkflow(name, w)
 }
 
+// PullRequests returns the cached pull request state for a PRD's branches,
+// without contacting GitHub.
+func (p *PRDService) PullRequests(name string) (session.PullRequestSet, error) {
+	return p.s.PullRequestsFor(name)
+}
+
+// RefreshPullRequests re-reads pull request state from GitHub. Slow enough to be
+// explicit — it shells out to gh — and never fails because GitHub is out of
+// reach; that is reported in the result.
+func (p *PRDService) RefreshPullRequests(name string) (session.PullRequestSet, error) {
+	return p.s.RefreshPullRequests(context.Background(), name)
+}
+
 // Issues returns the external issues already created for a PRD's stories.
 func (p *PRDService) Issues(name string) (map[string]session.IssueRef, error) {
 	return p.s.PublishedIssues(name)

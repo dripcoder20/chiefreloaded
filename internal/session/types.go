@@ -38,6 +38,11 @@ type PRDSummary struct {
 	Worktree string    `json:"worktree,omitempty"`
 	Branch   string    `json:"branch,omitempty"`
 	State    LoopState `json:"state"`
+
+	// PR is the pull request for this PRD's own branch, in per-PRD mode. Nil
+	// when there is none, when the branch has never been pushed, or when no
+	// lookup has run yet.
+	PR *PRRef `json:"pr,omitempty"`
 }
 
 // PRDDetail is the full document plus its progress journal.
@@ -86,13 +91,27 @@ const (
 	StatusBlocked    Status = "blocked"
 )
 
-// PRRef is a pull request belonging to a story.
+// PRRef is a pull request belonging to a story or to a PRD.
 type PRRef struct {
 	Number int    `json:"number"`
 	URL    string `json:"url"`
 	State  string `json:"state"` // "OPEN" | "MERGED" | "CLOSED"
 	Draft  bool   `json:"draft"`
 	Base   string `json:"base,omitempty"`
+	// Head is the branch the pull request was opened from. It is what the cache
+	// is keyed on, and what lets a PR be matched to a story without GitHub
+	// knowing anything about stories.
+	Head string `json:"head,omitempty"`
+
+	// CheckedAt is when this state was last confirmed against GitHub, in unix
+	// milliseconds.
+	//
+	// It is the only freshness signal, deliberately. A pull request merged or
+	// closed outside Loop looks exactly like one still open until something
+	// re-reads it, and how much that matters depends on how old the answer is —
+	// which a boolean cannot say. The link is always worth showing; the state
+	// beside it is worth trusting in proportion to this.
+	CheckedAt int64 `json:"checkedAt,omitempty"`
 }
 
 // LoopState is the run state of one PRD. Several PRDs run concurrently, so this

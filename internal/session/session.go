@@ -32,6 +32,7 @@ import (
 	"github.com/dripcoder/loop/internal/authoring"
 	"github.com/dripcoder/loop/internal/chief/agent"
 	"github.com/dripcoder/loop/internal/chief/config"
+	"github.com/dripcoder/loop/internal/chief/git"
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
 	"github.com/dripcoder/loop/internal/tracker"
 )
@@ -325,7 +326,55 @@ func (s *Session) PRD(name string) (PRDDetail, error) {
 	if err != nil {
 		return PRDDetail{}, err
 	}
-	return loadPRDDetail(root, name)
+	detail, err := loadPRDDetail(root, name)
+	if err != nil {
+		return PRDDetail{}, err
+	}
+	s.attachGitState(&detail)
+	return detail, nil
+}
+
+// attachGitState fills in the branches and pull requests a PRD's runs created.
+//
+// The markdown knows nothing about any of this — deliberately, since prd.md is
+// rewritten by the agent — so it is merged in here from the sidecar rather than
+// parsed. Reading only what is on disk keeps this call free of the network; a
+// live refresh is a separate, explicit step.
+func (s *Session) attachGitState(detail *PRDDetail) {
+	git, err := s.PRDGitFor(detail.Name)
+	if err != nil {
+		return
+	}
+
+	// A worktree's live branch, which summarisePRD already read, beats the
+	// recorded one: the recording says what a run used, the worktree says what
+	// is checked out now, and they diverge the moment anyone switches branch.
+	if detail.Branch == "" {
+		detail.Branch = git.Branch
+	}
+	detail.PR = cachedPR(git, detail.Branch)
+
+	for i := range detail.Stories {
+		branch := git.Stories[detail.Stories[i].ID]
+		if branch == "" {
+			continue
+		}
+		detail.Stories[i].Branch = branch
+		detail.Stories[i].PR = cachedPR(git, branch)
+	}
+}
+
+// cachedPR returns the remembered pull request for a branch. Its CheckedAt says
+// how old the answer is; nothing here contacts GitHub.
+func cachedPR(git PRDGitState, branch string) *PRRef {
+	if branch == "" {
+		return nil
+	}
+	ref, ok := git.PullRequests[branch]
+	if !ok {
+		return nil
+	}
+	return &ref
 }
 
 // PRDPath returns the on-disk path of a PRD's prd.md, so the frontend can open
@@ -463,10 +512,27 @@ func (s *Session) Rescan(ctx context.Context) error {
 	prds := discoverPRDs(root)
 	s.mu.Lock()
 	s.prds = prds
+	s.refreshProjectBranchLocked(root)
 	s.mu.Unlock()
 
 	s.bus.publish(Event{Kind: EvPRDChanged})
 	return nil
+}
+
+// refreshProjectBranchLocked re-reads which branch the repository is on.
+//
+// It was read once when the project was opened and never again, so it went
+// wrong the first time a run switched branch — and the branch a run switched to
+// is exactly the one worth showing. A repository with no commits has no current
+// branch, which is why a failure leaves the previous value rather than blanking
+// it.
+func (s *Session) refreshProjectBranchLocked(root string) {
+	if s.project == nil || !s.project.IsGitRepo {
+		return
+	}
+	if branch, err := git.GetCurrentBranch(root); err == nil {
+		s.project.Branch = branch
+	}
 }
 
 // LoopConfig returns the project config including Loop's own git block.

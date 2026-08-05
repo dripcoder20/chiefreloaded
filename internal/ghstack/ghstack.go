@@ -273,6 +273,43 @@ func findPR(ctx context.Context, dir, head string) (PR, bool, error) {
 	}, true, nil
 }
 
+// ListPRs returns every pull request in the repository, newest first.
+//
+// One call rather than one per branch. A PRD with twenty stories would
+// otherwise mean twenty round trips to GitHub every time the interface wanted
+// to show a link, and gh is slow enough that the difference is the difference
+// between doing this on selection and not doing it at all. Matching a head
+// branch to a story is local work.
+func ListPRs(ctx context.Context, dir string, limit int) ([]PR, error) {
+	out, err := run(ctx, dir, "gh", "pr", "list",
+		"--state", "all", "--limit", strconv.Itoa(limit),
+		"--json", "number,url,state,isDraft,baseRefName,headRefName")
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w", err)
+	}
+
+	var rows []struct {
+		Number      int    `json:"number"`
+		URL         string `json:"url"`
+		State       string `json:"state"`
+		IsDraft     bool   `json:"isDraft"`
+		BaseRefName string `json:"baseRefName"`
+		HeadRefName string `json:"headRefName"`
+	}
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		return nil, fmt.Errorf("parse gh pr list: %w", err)
+	}
+
+	prs := make([]PR, 0, len(rows))
+	for _, r := range rows {
+		prs = append(prs, PR{
+			Number: r.Number, URL: r.URL, State: r.State, Draft: r.IsDraft,
+			Base: r.BaseRefName, Head: r.HeadRefName,
+		})
+	}
+	return prs, nil
+}
+
 // editPR sets a pull request's title and body.
 //
 // Through the REST API rather than `gh pr edit`, which unconditionally queries

@@ -74,6 +74,8 @@ func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title st
 		// stopping here would strand every later story too.
 	} else {
 		st.recordPR(storyID, branch, pr)
+		// Also to disk, so the link survives the run that opened it.
+		_ = s.recordPullRequest(r.prdName, branch, prRefFrom(pr, s.now().UnixMilli()))
 		s.publish(Event{
 			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
 			Text: fmt.Sprintf("opened %s", pr.URL),
@@ -107,6 +109,10 @@ func (s *Session) ensureStoryBranch(ctx context.Context, r *run, storyID, title 
 
 	st := s.stackState(r)
 	branch := st.branchFor(storyID, title)
+	// Recorded before the checkout: the branch belongs to this story from the
+	// moment it is named, and a run that dies mid-checkout has still claimed it.
+	_ = s.recordBranch(r.prdName, storyID, branch)
+
 	if currentBranch(ctx, r.workDir) == branch {
 		return nil
 	}
