@@ -16,6 +16,10 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 *.out
 coverage.*
 
+# Compiled binaries. bin/ is the build output; loopctl is what `go build
+# ./cmd/loopctl` drops at the repo root when run without -o.
+/loopctl
+
 # chief runtime artefacts. The PRDs themselves (.chief/prds/*/prd.md) and the
 # accumulated codebase notes (progress.md) are tracked deliberately — they are
 # the project's memory. Everything below is per-machine and large: worktrees
