@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "../stores/app.svelte";
+  import { external } from "../lib/externalLink";
 
   const story = $derived(app.detail?.stories?.find((s) => s.id === app.selectedStory) ?? null);
 </script>
@@ -43,7 +44,7 @@
       {#if story.branch}<p class="mono">{story.branch}</p>{/if}
       {#if story.pr}
         <p class="mono">
-          <a href={story.pr.url} target="_blank" rel="noreferrer">
+          <a use:external href={story.pr.url} target="_blank" rel="noreferrer">
             #{story.pr.number} {story.pr.state.toLowerCase()}{story.pr.draft ? " · draft" : ""}
           </a>
           {#if story.pr.base}<br />→ {story.pr.base}{/if}

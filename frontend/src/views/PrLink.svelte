@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PRRef } from "../platform";
+  import { external } from "../lib/externalLink";
 
   /**
    * A pull request, with how much to trust what it says beside it.
@@ -35,6 +36,7 @@
 </script>
 
 <a
+  use:external
   class="pr"
   class:stale
   href={pr.url}
