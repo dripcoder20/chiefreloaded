@@ -2,10 +2,10 @@ package agentx
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -61,26 +61,55 @@ func TestCancellingTheContextKillsTheGroup(t *testing.T) {
 	})
 
 	cmd := g.LoopCommand(ctx, "", dir)
+
+	// The grandchild inherits this pipe, exactly as an agent's spawn inherits
+	// the agent's stdout. EOF on the read end therefore means every process
+	// holding the write end has gone — which is the property the decorator
+	// exists to provide, and precisely what killing only the leader fails to
+	// achieve.
+	//
+	// Asserted this way rather than by signalling the group, which cannot be
+	// done reliably after the fact: cmd.Wait reaps only the leader, so a
+	// grandchild reparented to init is briefly an unreaped zombie still in the
+	// group, and once the group has gone its id is free to be reused by a
+	// group we do not own. Both were seen — as a spurious pass on Linux and
+	// EPERM on macOS — from the same single check against a group id that is
+	// only meaningful for an instant.
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer reader.Close()
+	cmd.Stdout = writer
+
 	if err := cmd.Start(); err != nil {
+		writer.Close()
 		t.Fatalf("start: %v", err)
 	}
-	pgid := cmd.Process.Pid
+	// Drop our own copy, so the children are the only holders left.
+	writer.Close()
 	waitForFile(t, ready)
 
 	cancel()
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	drained := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, reader)
+		drained <- err
+	}()
 	select {
-	case <-done:
+	case err := <-drained:
+		if err != nil {
+			t.Fatalf("read the agent's output: %v", err)
+		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the process outlived its cancelled context")
+		t.Fatal("something in the group outlived the cancelled context, still holding the pipe open")
 	}
 
-	// ESRCH means the group is gone, which is the outcome. Anything else means
-	// something is still alive in it.
-	if err := syscall.Kill(-pgid, 0); err != syscall.ESRCH {
-		t.Errorf("process group still present after cancellation: %v", err)
+	// Reaps the leader. It cannot block on the pipe — cmd.Stdout is an *os.File,
+	// so os/exec hands the descriptor over rather than copying it on a goroutine.
+	if err := cmd.Wait(); err == nil {
+		t.Error("the agent exited cleanly; it was supposed to be killed")
 	}
 }
 
