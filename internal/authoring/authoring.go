@@ -82,6 +82,9 @@ type Session struct {
 	closed  bool
 	scrollb []byte
 
+	// nil unless LOOP_PTY_CAPTURE is set. See capture.go.
+	capture *capture
+
 	onData func(id string, chunk []byte)
 	onExit func(id string, outcome Outcome)
 }
@@ -169,9 +172,12 @@ func (m *Manager) Start(root string, provider chiefloop.Provider, spec Spec) (st
 		id: id, prdDir: prdDir, prdPath: prdPath,
 		pty: f, cmd: cmd,
 		onData: m.OnData, onExit: m.OnExit,
+		capture: newCapture(id),
 	}
 	m.sessions[id] = s
 	m.mu.Unlock()
+
+	s.capture.noteSize("start", int(size.Cols), int(size.Rows))
 
 	go s.pump()
 	return id, nil
@@ -186,6 +192,7 @@ func (s *Session) pump() {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			s.retain(chunk)
+			s.capture.writeChunk(chunk)
 			if s.onData != nil {
 				s.onData(s.id, chunk)
 			}
@@ -198,6 +205,7 @@ func (s *Session) pump() {
 	}
 
 	_ = s.cmd.Wait()
+	s.capture.close()
 	s.finish()
 }
 
@@ -272,6 +280,7 @@ func (m *Manager) Resize(id string, cols, rows int) error {
 	if err != nil {
 		return err
 	}
+	s.capture.noteSize("resize", orDefault(cols, 120), orDefault(rows, 32))
 	return pty.Setsize(s.pty, &pty.Winsize{
 		Cols: uint16(orDefault(cols, 120)),
 		Rows: uint16(orDefault(rows, 32)),

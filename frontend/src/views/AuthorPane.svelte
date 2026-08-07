@@ -3,10 +3,11 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
-  import { api, onAuthorData, onAuthorExit, type AuthorExit } from "../platform";
+  import { api, onAuthorData, onAuthorExit, type AuthorEvent, type AuthorExit } from "../platform";
   import { app, publishIssues, refresh, selectPrd } from "../stores/app.svelte";
   import { errorMessage } from "../stores/errors";
   import { resolveTerminalKey } from "../lib/terminalInput";
+  import { external } from "../lib/externalLink";
 
   /**
    * The interactive agent session that writes a PRD.
@@ -35,10 +36,29 @@
   let observer: ResizeObserver | null = null;
   let unsubscribe: Array<() => void> = [];
 
+  /**
+   * The session id stands in as PENDING between asking for a session and being
+   * told its id. Everything that needs a real id — writing keystrokes, pushing
+   * the terminal size — has to wait for one, and what arrives in the meantime is
+   * held rather than dropped. See adoptSession.
+   */
+  const PENDING = "pending";
+
   let sessionId = $state<string | null>(null);
   let starting = $state(false);
   let result = $state<AuthorExit | null>(null);
   let error = $state<string | null>(null);
+
+  /**
+   * Output that arrived before the session id did.
+   *
+   * Go starts pumping the PTY before Start() returns, so the agent's first
+   * chunks can cross the bridge while this pane still holds PENDING. Those
+   * chunks are the terminal setup — alternate screen, scroll region, clear —
+   * and discarding them left the emulator in a state the agent never asked for,
+   * which showed up as text drawn over text.
+   */
+  let earlyOutput: AuthorEvent[] = [];
 
   /**
    * Where this PRD publishes its stories, read from its own workflow settings.
@@ -48,7 +68,7 @@
    */
   let issueDestination = $state("");
 
-  const running = $derived(sessionId !== null && sessionId !== "pending" && result === null);
+  const running = $derived(sessionId !== null && sessionId !== PENDING && result === null);
 
   /**
    * The PRD this pane is editing, or null when it is creating one.
@@ -101,7 +121,10 @@
 
     const t = new Terminal({
       fontFamily: v("--font-mono", "monospace"),
-      fontSize: 12.5,
+      // Whole pixels. A fractional size gives a fractional cell width, and the
+      // DOM renderer then places glyphs off the grid it is drawing the rest of
+      // the screen on.
+      fontSize: 13,
       lineHeight: 1.35,
       cursorBlink: true,
       // The agent owns the scrollback; ours only needs to cover a reconnect.
@@ -157,14 +180,47 @@
     // settle within a microtask, and fitting too early yields a one-column
     // terminal that renders nothing and never recovers. The observer also covers
     // window and pane resizes, so there is a single path for all of it.
-    observer = new ResizeObserver(() => refit());
+    observer = new ResizeObserver(() => scheduleRefit());
     observer.observe(host);
     refit();
   }
 
   function writeToSession(data: string): void {
-    if (!sessionId || sessionId === "pending") return;
+    if (!sessionId || sessionId === PENDING) return;
     void api.author.write(sessionId, btoa(data));
+  }
+
+  /**
+   * Every size we push reaches the agent as SIGWINCH, and agents respond by
+   * discarding their frame and redrawing it. Dragging the window edge produces
+   * an observation per frame, so pushing every one interleaves dozens of partial
+   * redraws with the output still streaming in.
+   *
+   * Throttled on the leading edge, not debounced: xterm has already resized
+   * itself by the time we are called, so until the PTY is told, the agent is
+   * generating output for a width the screen does not have. Waiting for the
+   * drag to settle would hold that disagreement open for as long as the drag
+   * lasts. Push at once, coalesce the flood behind it, and push once more at
+   * the end so the final size is never the one that got swallowed.
+   */
+  const refitDelay = 80;
+  let refitTimer: ReturnType<typeof setTimeout> | null = null;
+  let refitMissed = false;
+
+  function scheduleRefit(): void {
+    if (refitTimer) {
+      refitMissed = true;
+      return;
+    }
+    refit();
+    refitTimer = setTimeout(endRefitWindow, refitDelay);
+  }
+
+  function endRefitWindow(): void {
+    refitTimer = null;
+    if (!refitMissed) return;
+    refitMissed = false;
+    scheduleRefit();
   }
 
   function refit(): void {
@@ -177,9 +233,21 @@
       // will catch up.
       return;
     }
-    if (sessionId && sessionId !== "pending") {
-      void api.author.resize(sessionId, term.cols, term.rows);
-    }
+    pushSize();
+  }
+
+  /**
+   * Tells the PTY how big the emulator actually is.
+   *
+   * Unconditionally, not only when fit() changed something: the size the PTY was
+   * started with is measured before the running bar exists, and a fit that
+   * happened while the id was still PENDING had nowhere to send its result. When
+   * the two disagree the agent erases and positions against a width the emulator
+   * does not have, which is what leaves one line's tail lying under the next.
+   */
+  function pushSize(): void {
+    if (!term || !sessionId || sessionId === PENDING) return;
+    void api.author.resize(sessionId, term.cols, term.rows);
   }
 
   /**
@@ -190,18 +258,26 @@
    * next stray layout tick.
    */
   $effect(() => {
-    if (active && sessionId && sessionId !== "pending") void ensureTerminal();
+    if (active && sessionId && sessionId !== PENDING) void ensureTerminal();
   });
+
+  /** atob gives latin-1 code units; the terminal wants the raw bytes back. */
+  function writeChunk(base64: string): void {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    term?.write(bytes);
+  }
 
   onMount(() => {
     unsubscribe.push(
       onAuthorData((ev) => {
+        if (sessionId === PENDING) {
+          earlyOutput.push(ev);
+          return;
+        }
         if (ev.sessionId !== sessionId) return;
-        // atob gives latin-1 code units; the terminal wants the raw bytes back.
-        const bin = atob(ev.data);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        term?.write(bytes);
+        writeChunk(ev.data);
       }),
       onAuthorExit((ev) => {
         if (ev.sessionId !== sessionId) return;
@@ -217,11 +293,12 @@
     for (const off of unsubscribe) off();
     unsubscribe = [];
     observer?.disconnect();
+    if (refitTimer) clearTimeout(refitTimer);
     // Only reached when the pane itself is torn down — the app closing, not an
     // ordinary tab switch, which now leaves this component mounted and hidden.
     // Releasing the session here is the existing close-session behaviour: don't
     // orphan an agent holding a PTY with nothing attached to it.
-    if (sessionId && sessionId !== "pending" && !result) void api.author.stop(sessionId);
+    if (sessionId && sessionId !== PENDING && !result) void api.author.stop(sessionId);
     term?.dispose();
   });
 
@@ -234,9 +311,14 @@
     try {
       // Reveal the terminal container before creating the terminal, so it is
       // measured against real geometry.
-      sessionId = "pending";
+      sessionId = PENDING;
+      earlyOutput = [];
       await ensureTerminal();
-      term?.clear();
+      // reset(), not clear(): clear() empties the screen but leaves the modes
+      // behind — scroll region, alternate screen, cursor state. A session ended
+      // by Stop is SIGKILLed and never emits its restore sequences, so without
+      // this the next agent draws inside the dead one's scroll region.
+      term?.reset();
 
       const id = await api.author.start({
         kind,
@@ -244,15 +326,34 @@
         cols: term?.cols ?? 120,
         rows: term?.rows ?? 32,
       } as never);
-      sessionId = id;
+      adoptSession(id);
 
       term?.focus();
     } catch (err) {
       sessionId = null;
+      earlyOutput = [];
       error = errorMessage(err);
     } finally {
       starting = false;
     }
+  }
+
+  /**
+   * Takes ownership of a started session.
+   *
+   * Both halves matter and both have to happen before anything yields, or a live
+   * event overtakes the buffer it is supposed to follow: replay what arrived
+   * while the id was PENDING, then push the size, because the fit triggered by
+   * this pane becoming visible had no id to send its result to and the PTY is
+   * still on whatever was measured before that.
+   */
+  function adoptSession(id: string): void {
+    sessionId = id;
+    for (const ev of earlyOutput) {
+      if (ev.sessionId === id) writeChunk(ev.data);
+    }
+    earlyOutput = [];
+    pushSize();
   }
 
   async function stop(): Promise<void> {
@@ -296,7 +397,6 @@
     sessionId = null;
     result = null;
     startedFor = null;
-    term?.clear();
     void start(kind, conversationPrd ?? undefined);
   }
 </script>
@@ -358,7 +458,9 @@
                 <li>
                   <span class="story-id tnum">{r.storyId}</span>
                   {#if r.ref}
-                    <a href={r.ref.url} target="_blank" rel="noreferrer">{r.ref.identifier}</a>
+                    <a use:external href={r.ref.url} target="_blank" rel="noreferrer"
+                      >{r.ref.identifier}</a
+                    >
                     {#if r.skipped}<span class="note">already created</span>{/if}
                   {:else}
                     <span class="failed">{r.error ?? "not published"}</span>
@@ -388,7 +490,13 @@
       </div>
     {/if}
 
-    <div class="term" bind:this={host}></div>
+    <!-- The inset lives on this wrapper, never on .term. FitAddon measures the
+         element the terminal was opened on and subtracts only that element's
+         own padding — so padding there is counted as usable space and the fit
+         comes out too large. See the note on .term-inset below. -->
+    <div class="term-inset">
+      <div class="term" bind:this={host}></div>
+    </div>
   </div>
 </div>
 
@@ -502,10 +610,33 @@
     display: none;
   }
 
-  .term {
+  /**
+   * The terminal's breathing room, kept one element above the terminal itself.
+   *
+   * FitAddon reads its width and height from the element the terminal was
+   * opened on, but subtracts padding from the terminal's own `.xterm` div. Any
+   * padding on the host is therefore measured as space the terminal can use and
+   * never taken back — and `box-sizing: border-box`, which app.css applies to
+   * everything, folds it into the measured height rather than out of it.
+   *
+   * 8px/10px here was one row and two columns of overstated fit. The agent was
+   * told a screen size larger than the one on show, so it drew its input box
+   * below the visible area and erased past the right-hand edge: text landing on
+   * top of text, and only once the screen filled and it began scrolling.
+   *
+   * Keep .term free of padding, borders and anything else with a box.
+   */
+  .term-inset {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     padding: 8px 10px;
+  }
+
+  .term {
+    flex: 1;
+    min-height: 0;
   }
 
   .running-bar,

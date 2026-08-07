@@ -19,6 +19,8 @@ const bridge = vi.hoisted(() => ({
   dataHandler: null as null | ((ev: unknown) => void),
   exitHandler: null as null | ((ev: unknown) => void),
   keyHandler: null as null | ((e: KeyboardEvent) => boolean),
+  termWrites: [] as Uint8Array[],
+  resets: 0,
 }));
 
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
@@ -30,9 +32,13 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon(): void {}
     open(): void {}
     onData(): void {}
-    write(): void {}
+    write(bytes: Uint8Array): void {
+      bridge.termWrites.push(bytes);
+    }
     focus(): void {}
-    clear(): void {}
+    reset(): void {
+      bridge.resets++;
+    }
     dispose(): void {}
     attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean): void {
       bridge.keyHandler = fn;
@@ -47,6 +53,7 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 
 vi.mock("../platform", () => ({
+  openURL: vi.fn(),
   api: {
     prd: { workflow: vi.fn().mockResolvedValue({ issueDestination: "" }) },
     author: {
@@ -139,9 +146,12 @@ beforeEach(() => {
   bridge.start.mockReset();
   bridge.stop.mockReset();
   bridge.write.mockReset();
+  bridge.resize.mockReset();
   bridge.dataHandler = null;
   bridge.exitHandler = null;
   bridge.keyHandler = null;
+  bridge.termWrites = [];
+  bridge.resets = 0;
 });
 
 afterEach(() => cleanup());
@@ -214,6 +224,53 @@ describe("AuthorPane session preservation", () => {
     view.unmount();
 
     expect(bridge.stop).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The emulator and the PTY have to agree on what state the terminal is in, or
+ * the agent erases and positions against a screen that isn't the one on show —
+ * which reads as text drawn over text, not as a size being slightly off.
+ */
+describe("AuthorPane terminal fidelity", () => {
+  const decode = (bytes: Uint8Array) => String.fromCharCode(...bytes);
+
+  // Go pumps the PTY before Start() returns, so the agent's terminal setup can
+  // reach this pane before it knows the id to match it against.
+  it("replays output that arrived before the session id did", async () => {
+    let announceId: (id: string) => void = () => {};
+    bridge.start.mockReturnValue(new Promise<string>((resolve) => (announceId = resolve)));
+    store.app.authorTarget = { kind: "new", prd: "checkout" };
+
+    render(AuthorPane, { props: { active: true } });
+    await waitFor(() => expect(bridge.start).toHaveBeenCalledTimes(1));
+
+    bridge.dataHandler?.({ sessionId: SESSION_ID, data: btoa("[?1049h") });
+    expect(bridge.termWrites).toHaveLength(0); // held, not written blind
+
+    announceId(SESSION_ID);
+    await waitFor(() => expect(bridge.termWrites).toHaveLength(1));
+    expect(decode(bridge.termWrites[0])).toBe("[?1049h");
+  });
+
+  // The size passed to start() is measured before the running bar exists, and a
+  // fit triggered by the pane becoming visible has no id to report against.
+  it("tells the PTY its size once the session id is known", async () => {
+    await startSession();
+
+    await waitFor(() => expect(bridge.resize).toHaveBeenCalledWith(SESSION_ID, 80, 24));
+  });
+
+  // Stop SIGKILLs the agent, so it never emits the sequences that would put the
+  // terminal back. Only a full reset clears the scroll region it left behind.
+  it("resets the emulator between sessions rather than only its screen", async () => {
+    const view = await startSession("new", "checkout");
+    expect(bridge.resets).toBe(1);
+
+    await endSession({ created: true, parsed: true, stories: 0 });
+    await fireEvent.click(view.getByRole("button", { name: "New session" }));
+
+    await waitFor(() => expect(bridge.resets).toBe(2));
   });
 });
 
