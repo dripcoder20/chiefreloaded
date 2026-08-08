@@ -187,6 +187,50 @@ describe("publishing a stack", () => {
     expect(backend.publishStack).toHaveBeenCalledWith({ prd: "checkout", draft: true });
   });
 
+  // A pass that stops half way arrives as a report rather than a rejection, so
+  // that both halves survive: the sentence that says it failed, and the per-story
+  // list that says which pull requests exist and which do not.
+  it("keeps the per-story outcome of a stack that failed half way", async () => {
+    backend.publishStack.mockResolvedValue({
+      prd: "checkout",
+      failed: "US-002: gh pr create: could not reach github.com",
+      stories: [
+        STACK_REPORT.stories[0],
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          error: "gh pr create: could not reach github.com",
+        },
+        {
+          storyId: "US-003",
+          branch: "loop/checkout/us-003",
+          skipped: "the branch below it was not published",
+        },
+      ],
+    });
+
+    await publishStack(false);
+
+    expect(app.error).toContain("US-002");
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(app.publishedStack?.stories?.[1]?.error).toContain("github.com");
+    expect(app.publishedStack?.stories?.[2]?.skipped).toContain("below");
+  });
+
+  // The retry: nothing was opened, and what exists is reported back.
+  it("shows a retry that had nothing left to do as the pull requests it found", async () => {
+    backend.publishStack.mockResolvedValue({
+      prd: "checkout",
+      stories: [{ ...STACK_REPORT.stories[0], alreadyOpen: true }],
+    });
+
+    await publishStack(false);
+
+    expect(app.error).toBeNull();
+    expect(app.publishedStack?.stories?.[0]?.alreadyOpen).toBe(true);
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+  });
+
   it("reports a refusal rather than pretending a stack was published", async () => {
     backend.publishStack.mockRejectedValue(
       new Error("this run put every story on one branch, so there is no stack to publish"),

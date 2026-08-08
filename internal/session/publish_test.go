@@ -459,6 +459,10 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  if [ -f "$D/fail-$slug" ]; then
+    echo "could not reach github.com" >&2
+    exit 1
+  fi
   if [ -f "$D/pr-$slug" ]; then
     echo "a pull request for $head already exists" >&2
     exit 1
@@ -522,6 +526,28 @@ func (g *scriptedGH) creations() []string {
 // edited reports whether the pull request's title and body were patched, which is
 // what updating an existing one amounts to.
 func (g *scriptedGH) edited() bool { return readOrEmpty(filepath.Join(g.dir, "patch")) != "" }
+
+// failCreating makes `gh pr create` fail for one branch, the way an unreachable
+// GitHub does: the branch is pushed, nothing is created, and the pull request that
+// was not created is still absent from `gh pr list`. Undone by allowCreating,
+// which is what a retry after the outage looks like.
+func (g *scriptedGH) failCreating(t *testing.T, branch string) {
+	t.Helper()
+	if err := os.WriteFile(g.failPath(branch), []byte("fail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (g *scriptedGH) allowCreating(t *testing.T, branch string) {
+	t.Helper()
+	if err := os.Remove(g.failPath(branch)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (g *scriptedGH) failPath(branch string) string {
+	return filepath.Join(g.dir, "fail-"+slug(branch))
+}
 
 // draftFor reports whether a branch's pull request was opened as a draft.
 func (g *scriptedGH) draftFor(branch string) bool {

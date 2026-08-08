@@ -798,10 +798,14 @@ export async function publishPullRequest(draft: boolean): Promise<void> {
 /**
  * Open one pull request per story, from the bottom of the stack upwards.
  *
- * A stack that stops half way still created what it created. The report does not
- * survive a rejected call, so the PRD is reloaded either way: each pull request
- * was recorded against its branch as it was opened, which is what puts the links
- * back on the story rows.
+ * A stack that stops half way still created what it created, and says so twice:
+ * `failed` becomes the error banner, and the per-story list underneath the control
+ * says which stories have a pull request and which do not. Pressing again is the
+ * retry — it attempts only what is missing.
+ *
+ * The PRD is reloaded either way, including after a rejected call: each pull
+ * request was recorded against its branch as it was opened, which is what puts the
+ * links back on the story rows.
  */
 export async function publishStack(draft: boolean): Promise<void> {
   const prd = app.selectedPrd;
@@ -811,7 +815,9 @@ export async function publishStack(draft: boolean): Promise<void> {
   app.error = null;
   app.publishedStack = null;
   try {
-    app.publishedStack = await api.prd.publishStack({ prd, draft } as never);
+    const report = await api.prd.publishStack({ prd, draft } as never);
+    app.publishedStack = report;
+    app.error = report.failed || null;
   } catch (err) {
     app.error = errorMessage(err);
   } finally {
