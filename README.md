@@ -8,16 +8,20 @@ window, adding two things a TUI can't do:
 
 - **Embedded PRD authoring.** `chief new` / `chief edit` hand the terminal over
   to an interactive agent session. Loop runs that conversation in-app.
-- **Per-story stacked branches and draft PRs.** Instead of one branch and one PR
-  per PRD, every story gets its own branch stacked on the previous one, pushed
-  with a draft PR the moment it completes — built on
+- **Per-story stacked branches.** Instead of one branch for the whole PRD, every
+  story can get its own branch stacked on the previous one, ready to be
+  published as a stack of pull requests — built on
   [GitHub's stacked pull requests](https://github.blog/changelog/2026-07-30-stacked-pull-requests-are-now-in-public-preview/).
+
+A run only commits: it pushes nothing and opens no pull request. When the work
+is ready you publish it yourself, as one pull request for the PRD or one per
+story. See [docs/workflows.md](docs/workflows.md#publishing).
 
 Loop reads and writes the same `.chief/` directory as the chief TUI, so you can
 switch between the two on the same project.
 
-> **Status: alpha.** Running PRDs, per-story stacked draft PRs, the log view and
-> embedded PRD authoring all work; polish and packaging do not. See
+> **Status: alpha.** Running PRDs, publishing them as stacked draft PRs, the log
+> view and embedded PRD authoring all work; polish and packaging do not. See
 > [docs/parity.md](docs/parity.md) for what is and isn't built, and
 > [docs/design.md](docs/design.md) for why it is shaped this way.
 
@@ -49,8 +53,8 @@ Run `task --list` for everything else.
 ## Documentation
 
 - [docs/workflows.md](docs/workflows.md) — authoring sessions, the PRD sidebar
-  and its actions, repository launchers, per-phase agents, and stacked pull
-  requests.
+  and its actions, repository launchers, per-phase agents, the branch layout
+  question, and publishing.
 - [docs/usage.md](docs/usage.md) — what the token and cost figures mean, and
   which fields each agent CLI actually reports.
 - [docs/parity.md](docs/parity.md) — feature checklist against the chief TUI.

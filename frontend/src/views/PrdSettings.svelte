@@ -3,8 +3,7 @@
   import { api, type PRDWorkflow } from "../platform";
 
   /**
-   * The selected PRD's own workflow: which agent implements it, whether it
-   * and whether it stacks a pull request per story.
+   * The selected PRD's own workflow: which agent implements it.
    *
    * These were only settable while creating a PRD, which meant a decision made
    * once could never be revisited — and the project-wide Settings dialog was
