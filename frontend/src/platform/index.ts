@@ -7,7 +7,7 @@
  * an ordinary browser against `mock.ts`, which matters because rebuilding a Go
  * binary to adjust a border radius is intolerable.
  */
-import { Events } from "@wailsio/runtime";
+import { Browser, Events } from "@wailsio/runtime";
 import {
   AuthoringService,
   PRDService,
@@ -103,6 +103,23 @@ export const isDesktop =
     (window as { webkit?: { messageHandlers?: unknown } }).webkit?.messageHandlers ||
       (window as { chrome?: { webview?: unknown } }).chrome?.webview,
   );
+
+/**
+ * Opens a URL in the user's real browser.
+ *
+ * A plain `target="_blank"` does nothing in an embedded webview: there is no
+ * window for it to open and no opener to handle it, so the click is swallowed
+ * and the link reads as broken. The webview must be asked to hand the URL to the
+ * host instead. In a browser preview the ordinary anchor behaviour is correct,
+ * so the mock just opens a tab.
+ */
+export function openURL(url: string): void {
+  if (!isDesktop) {
+    window.open(url, "_blank", "noreferrer");
+    return;
+  }
+  void Browser.OpenURL(url);
+}
 
 /**
  * Subscribe to the event firehose. Returns an unsubscribe function.
