@@ -194,15 +194,7 @@ Per-PRD settings are stored in a sidecar beside the document:
   "version": 1,
   "workflow": {
     "implementationAgent": "codex",
-    "stackPerStory": true,
-    "issueDestination": "github"
-  },
-  "issues": {
-    "US-001": {
-      "destination": "github",
-      "identifier": "#41",
-      "url": "https://github.com/acme/demo/issues/41"
-    }
+    "stackPerStory": true
   }
 }
 ```
@@ -226,67 +218,6 @@ the earlier error rather than leaving it on screen next to a running loop.
 
 ---
 
-## Publishing user stories as issues
-
-### Choosing a destination
-
-The New PRD tab offers **Do not publish**, **Linear** and **GitHub Issues**.
-Only destinations that are configured and authenticated for the current project
-are selectable; an unavailable one stays visible, disabled, with the missing
-configuration named.
-
-| Destination | Requires |
-|---|---|
-| GitHub Issues | `gh` installed, authenticated (`gh auth login`), and a GitHub repository |
-| Linear | `LINEAR_API_KEY` set to a personal API key, and `LINEAR_TEAM` set to the team key |
-
-Credentials are read from the environment at the point of use. They are never
-written into a PRD, into `.chief/`, or into any log.
-
-### When publishing happens
-
-Publishing begins only after the generated PRD has been saved. That ordering is
-deliberate: a tracker outage costs you the links, never the document. If
-publishing fails entirely, the PRD is byte-identical to what the agent wrote.
-
-One issue is created per user story, using the story's ID and title, its
-description, and its acceptance criteria.
-
-### References written back
-
-Each created issue is written into its own story, below the description and
-above the acceptance criteria:
-
-```markdown
-**External Issue:** [#41](https://github.com/acme/demo/issues/41)
-```
-
-References are mapped by story ID, not by the order responses arrive, so a
-tracker replying out of order cannot attach an issue to the wrong story. The
-PRD is replaced atomically, so an interrupted write cannot truncate it.
-
-### Retrying
-
-Publishing is idempotent. Each story is checked against the references already
-recorded in the sidecar, so publishing again creates issues only for the
-stories that do not have one. A duplicated issue cannot be un-created, which is
-why this is checked rather than assumed.
-
-A partial failure reports per story: which succeeded, which failed and why. The
-successful ones keep their issues, and a retry attempts only the rest.
-
-Switching tabs does not cancel publishing; the current status is on screen when
-you return.
-
-### What it does not do
-
-- Edits to a story are not synchronised to an already-created issue.
-- Issues are not deleted when a PRD or story is deleted.
-- Existing tracker issues are not imported into a PRD.
-- One destination per PRD; Linear and GitHub are not published to together.
-
----
-
 ## Driving it headlessly
 
 `cmd/loopctl` exposes the same engine without a window, which is what the
@@ -296,13 +227,5 @@ end-to-end tests use:
 loopctl workflow <prd> -json
 ```
 
-Reports a PRD's saved settings, the agent that would actually implement it
-(including the error when a saved agent has been uninstalled), the references
-already recorded, and which destinations are available.
-
-```bash
-loopctl publish <prd>
-```
-
-Publishes the stories and prints one row per story, so a partial failure is
-legible rather than a single verdict.
+Reports a PRD's saved settings and the agent that would actually implement it,
+including the error when a saved agent has been uninstalled.

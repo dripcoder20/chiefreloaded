@@ -21,11 +21,9 @@ import { EventKind, LoopState } from "../../bindings/github.com/dripcoder/loop/i
 import type {
   AgentDefaults,
   AppStatus,
-  DestinationStatus,
   Environment,
   NewPRDRequest,
   PRDWorkflow,
-  PublishReport,
   PullRequestSet,
   PRRef,
   Event as LoopEvent,
@@ -54,11 +52,9 @@ export { EventKind, LoopState };
 export type {
   AgentDefaults,
   AppStatus,
-  DestinationStatus,
   Environment,
   NewPRDRequest,
   PRDWorkflow,
-  PublishReport,
   PullRequestSet,
   PRRef,
   LoopEvent,
@@ -208,8 +204,6 @@ const wailsApi = {
     rescan: (): Promise<void> => ProjectService.Rescan(),
     localApps: (): Promise<AppStatus[]> => list(ProjectService.LocalApps()),
     agentDefaults: (): Promise<AgentDefaults> => ProjectService.AgentDefaults(),
-    issueDestinations: (): Promise<DestinationStatus[]> =>
-      list(ProjectService.IssueDestinations()),
     openInApp: (app: string): Promise<void> => ProjectService.OpenInApp(app),
     openOnGitHub: (): Promise<void> => ProjectService.OpenOnGitHub(),
   },
@@ -223,11 +217,9 @@ const wailsApi = {
     workflow: (name: string): Promise<PRDWorkflow> => PRDService.Workflow(name),
     saveWorkflow: (name: string, w: PRDWorkflow): Promise<void> =>
       PRDService.SaveWorkflow(name, w),
-    issues: (name: string) => PRDService.Issues(name),
     pullRequests: (name: string): Promise<PullRequestSet> => PRDService.PullRequests(name),
     refreshPullRequests: (name: string): Promise<PullRequestSet> =>
       PRDService.RefreshPullRequests(name),
-    publish: (name: string): Promise<PublishReport> => PRDService.Publish(name),
   },
   run: {
     start: (req: StartRequest): Promise<string> => RunService.Start(req),

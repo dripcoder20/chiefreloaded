@@ -4,7 +4,7 @@
 
   /**
    * The selected PRD's own workflow: which agent implements it, whether it
-   * stacks a pull request per story, and where its stories are published.
+   * and whether it stacks a pull request per story.
    *
    * These were only settable while creating a PRD, which meant a decision made
    * once could never be revisited — and the project-wide Settings dialog was
@@ -36,7 +36,7 @@
     const got = await api.prd.workflow(name).catch(() => null);
     // Only adopt it if the selection has not moved on while we were reading.
     if (loadedFor === name) {
-      workflow = got ?? ({ implementationAgent: "", stackPerStory: false, issueDestination: "" } as PRDWorkflow);
+      workflow = got ?? ({ implementationAgent: "", stackPerStory: false } as PRDWorkflow);
     }
   }
 
@@ -100,29 +100,6 @@
           Overrides the project's git mode for this PRD alone. Applied when the run
           starts — nothing is branched or opened now.
         </p>
-      </section>
-
-      <section>
-        <h3>Issues</h3>
-
-        <label>
-          <span>Publish to</span>
-          <select
-            value={workflow.issueDestination ?? ""}
-            aria-label="Publish issues to"
-            onchange={(e) => update((w) => (w.issueDestination = e.currentTarget.value as never))}
-          >
-            <option value="">Do not publish</option>
-            {#each app.destinations as dest (dest.destination)}
-              <option value={dest.destination} disabled={!dest.available}>
-                {dest.name}{dest.available ? "" : " — unavailable"}
-              </option>
-            {/each}
-          </select>
-        </label>
-        {#each app.destinations.filter((d) => !d.available && d.reason) as dest (dest.destination)}
-          <p class="help">{dest.name}: {dest.reason}</p>
-        {/each}
       </section>
 
       <p class="status" aria-live="polite">{saving ? "Saving…" : "Saved automatically"}</p>

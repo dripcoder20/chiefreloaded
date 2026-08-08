@@ -35,7 +35,6 @@ import (
 	"github.com/dripcoder/loop/internal/chief/config"
 	"github.com/dripcoder/loop/internal/chief/git"
 	chiefloop "github.com/dripcoder/loop/internal/chief/loop"
-	"github.com/dripcoder/loop/internal/tracker"
 )
 
 // Options configures a Session. The zero value is usable.
@@ -55,9 +54,6 @@ type Options struct {
 	// Provider overrides agent resolution entirely. Tests inject a scripted
 	// agent here; production leaves it nil and resolves from config.
 	Provider chiefloop.Provider
-	// Tracker overrides issue-tracker resolution. Tests publish against a fake
-	// rather than creating real issues in somebody's tracker.
-	Tracker func(IssueDestination) (tracker.Client, error)
 }
 
 // Session is a single opened project and everything running against it.

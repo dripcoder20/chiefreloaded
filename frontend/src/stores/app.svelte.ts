@@ -10,11 +10,9 @@ import {
   onReady,
   type AgentDefaults,
   type AppStatus,
-  type DestinationStatus,
   type Environment,
   type NewPRDRequest,
   type PRDWorkflow,
-  type PublishReport,
   type Settings,
   type LoopEvent,
   type PRDDetail,
@@ -158,11 +156,6 @@ class AppState {
 
   /** The resolved per-phase agent defaults, for the New PRD selectors. */
   agentDefaults = $state<AgentDefaults | null>(null);
-  /** Which issue trackers this project can publish to, and why not when it cannot. */
-  destinations = $state<DestinationStatus[]>([]);
-  /** The most recent publishing outcome, shown per story. */
-  publishing = $state<PublishReport | null>(null);
-
   /** Which local editors are installed, for the repository launchers. */
   localApps = $state<AppStatus[]>([]);
   /** True while a repository launch is in flight, so one click launches once. */
@@ -623,7 +616,7 @@ export async function openInApp(target: string): Promise<void> {
 }
 
 /**
- * Load the resolved per-phase agent defaults and which trackers are configured.
+ * Load the resolved per-phase agent defaults.
  *
  * The defaults are resolved on the Go side so the selectors can show the actual
  * agent rather than a blank that ambiguously means "whatever is configured".
@@ -633,11 +626,6 @@ export async function reloadCreationOptions(): Promise<void> {
     app.agentDefaults = await api.project.agentDefaults();
   } catch {
     app.agentDefaults = null;
-  }
-  try {
-    app.destinations = await api.project.issueDestinations();
-  } catch {
-    app.destinations = [];
   }
 }
 
@@ -654,29 +642,6 @@ export async function savePrdWorkflow(name: string, workflow: PRDWorkflow): Prom
   } catch (err) {
     app.error = errorMessage(err);
     return false;
-  }
-}
-
-/**
- * Publish a PRD's user stories to the configured tracker.
- *
- * Reports per-story outcomes rather than one verdict: a partial failure must
- * keep the references it did create and identify only the stories to retry.
- */
-export async function publishIssues(name: string): Promise<PublishReport | null> {
-  try {
-    const report = await api.prd.publish(name);
-    app.publishing = report;
-    // Go marshals an empty slice as null, so a report with nothing in it is a
-    // valid shape rather than a missing field.
-    const total = report.results?.length ?? 0;
-    if (report.failed?.length) {
-      app.error = `${report.failed.length} of ${total} stories could not be published; retry to attempt only those.`;
-    }
-    return report;
-  } catch (err) {
-    app.error = errorMessage(err);
-    return null;
   }
 }
 

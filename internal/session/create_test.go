@@ -87,7 +87,6 @@ func TestCreatePRDSavesTheChosenWorkflow(t *testing.T) {
 	want := PRDWorkflow{
 		ImplementationAgent: "codex",
 		StackPerStory:       true,
-		IssueDestination:    IssueGitHub,
 	}
 	if _, err := s.CreatePRD(t.Context(), NewPRDRequest{Name: "checkout", Workflow: want}); err != nil {
 		t.Fatal(err)

@@ -4,10 +4,9 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { api, onAuthorData, onAuthorExit, type AuthorEvent, type AuthorExit } from "../platform";
-  import { app, publishIssues, refresh, selectPrd } from "../stores/app.svelte";
+  import { app, refresh, selectPrd } from "../stores/app.svelte";
   import { errorMessage } from "../stores/errors";
   import { resolveTerminalKey } from "../lib/terminalInput";
-  import { external } from "../lib/externalLink";
 
   /**
    * The interactive agent session that writes a PRD.
@@ -60,14 +59,6 @@
    */
   let earlyOutput: AuthorEvent[] = [];
 
-  /**
-   * Where this PRD publishes its stories, read from its own workflow settings.
-   * The pane no longer chooses it — that moved to the New PRD dialog and to PRD
-   * Settings — but it still decides whether publishing is offered once the
-   * document has been written.
-   */
-  let issueDestination = $state("");
-
   const running = $derived(sessionId !== null && sessionId !== PENDING && result === null);
 
   /**
@@ -96,24 +87,6 @@
     if (!prd || startedFor === prd || sessionId) return;
     void start(target?.kind ?? "new", prd);
   });
-
-  // Follow the selection, so publishing is offered against this PRD's own
-  // settings rather than those of the one looked at before it.
-  $effect(() => {
-    const prd = conversationPrd;
-    issueDestination = "";
-    if (prd) void loadDestination(prd);
-  });
-
-  async function loadDestination(prd: string): Promise<void> {
-    try {
-      const workflow = await api.prd.workflow(prd);
-      if (conversationPrd === prd) issueDestination = workflow?.issueDestination ?? "";
-    } catch {
-      // Publishing is an extra; not knowing where to publish must not disturb
-      // the conversation itself.
-    }
-  }
 
   function makeTerminal(): Terminal {
     const css = getComputedStyle(document.documentElement);
@@ -361,26 +334,6 @@
   }
 
   /**
-   * Publishing is its own step, after the PRD has been saved. Switching tabs
-   * does not cancel it — the request is owned by the store, not this view — and
-   * the per-story outcome is on screen when the user comes back.
-   */
-  let publishing = $state(false);
-  const publishLabel = $derived(
-    publishing ? "Publishing…" : app.publishing?.failed?.length ? "Retry failed" : "Publish issues",
-  );
-
-  async function publish(prd: string): Promise<void> {
-    if (publishing) return;
-    publishing = true;
-    try {
-      await publishIssues(prd);
-    } finally {
-      publishing = false;
-    }
-  }
-
-  /**
    * Opens a fresh conversation for the same PRD.
    *
    * startedFor has to be released along with the session id. It is what stops
@@ -442,43 +395,6 @@
         <button onclick={reset}>New session</button>
       </div>
 
-      <!-- Publishing runs only after the PRD is safely on disk. A tracker
-           outage therefore costs the links, never the PRD. -->
-      {#if result.outcome.created && issueDestination}
-        <div class="publish">
-          <div class="publish-head">
-            <strong>Issues</strong>
-            <button disabled={publishing} onclick={() => publish(result?.spec.prd ?? "")}>
-              {publishLabel}
-            </button>
-          </div>
-          {#if app.publishing}
-            <ul class="publish-list">
-              {#each app.publishing.results as r (r.storyId)}
-                <li>
-                  <span class="story-id tnum">{r.storyId}</span>
-                  {#if r.ref}
-                    <a use:external href={r.ref.url} target="_blank" rel="noreferrer"
-                      >{r.ref.identifier}</a
-                    >
-                    {#if r.skipped}<span class="note">already created</span>{/if}
-                  {:else}
-                    <span class="failed">{r.error ?? "not published"}</span>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-            {#if app.publishing.failed?.length}
-              <p class="help">
-                Retrying attempts only the {app.publishing.failed.length} story{app.publishing
-                  .failed.length === 1
-                  ? ""
-                  : "s"} without an issue; the rest keep the issues they already have.
-              </p>
-            {/if}
-          {/if}
-        </div>
-      {/if}
     {:else if running}
       <div class="running-bar">
         <span class="dot"></span>
@@ -561,43 +477,6 @@
     color: var(--danger);
     font-size: 12px;
     margin: 4px 0 0;
-  }
-
-  .publish {
-    padding: 8px 14px 10px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-  }
-  .publish-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .publish-head button {
-    margin-left: auto;
-  }
-  .publish-list {
-    list-style: none;
-    margin: 8px 0 0;
-    padding: 0;
-  }
-  .publish-list li {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 2px 0;
-  }
-  .story-id {
-    color: var(--fg-3);
-    font-family: var(--font-mono);
-  }
-  /* A story that failed is called out per story, not as one verdict: the ones
-     that succeeded keep their issues and must not read as lost. */
-  .failed {
-    color: var(--warn);
-  }
-  .note {
-    color: var(--fg-3);
   }
 
   .term-wrap {

@@ -22,7 +22,6 @@
   let authoringAgent = $state("");
   let implementationAgent = $state("");
   let stackPerStory = $state(false);
-  let issueDestination = $state("");
   let creating = $state(false);
 
   let dialogEl = $state<HTMLDivElement | null>(null);
@@ -68,7 +67,7 @@
       await createPrd({
         name,
         context,
-        workflow: { implementationAgent, stackPerStory, issueDestination },
+        workflow: { implementationAgent, stackPerStory },
       } as never);
     } finally {
       creating = false;
@@ -187,21 +186,6 @@
         Applied when implementation starts. Choosing it creates no branches or pull
         requests now.
       </p>
-
-      <label>
-        <span>Publish issues to</span>
-        <select bind:value={issueDestination} aria-label="Publish issues to">
-          <option value="">Do not publish</option>
-          {#each app.destinations as dest (dest.destination)}
-            <option value={dest.destination} disabled={!dest.available}>
-              {dest.name}{dest.available ? "" : " — unavailable"}
-            </option>
-          {/each}
-        </select>
-      </label>
-      {#each app.destinations.filter((d) => !d.available && d.reason) as dest (dest.destination)}
-        <p class="help">{dest.name}: {dest.reason}</p>
-      {/each}
     </div>
 
     <footer class="foot">
