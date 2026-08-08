@@ -25,14 +25,13 @@ func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title st
 		return nil
 	}
 
-	// A story that changed nothing has nothing to review. Carry the branch
-	// pointer forward untouched so the next story stacks on the same base.
 	if check.Verdict == VerdictNoCommit {
 		s.publish(Event{
 			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
 			Text: "no commit for this story; skipping its pull request",
 			Git:  &GitEvent{Op: "pr-create", State: "warn", Fatal: false},
 		})
+		s.skipEmptyStory(r, storyID)
 		return nil
 	}
 
@@ -95,6 +94,22 @@ func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title st
 	return nil
 }
 
+// skipEmptyStory records that a story committed nothing and hands its base on to
+// the story above it.
+//
+// A branch with no commit on it is the same commit as the branch below, so it has
+// nothing to review and must not become anyone's base: the story above stacks on
+// whatever this one was going to stack on, which is also what git does when its
+// branch is cut from this unchanged checkout.
+func (s *Session) skipEmptyStory(r *run, storyID string) {
+	_ = s.recordNoCommit(r.prdName, storyID)
+
+	st := s.stackState(r)
+	if nextID, _ := nextIncompleteStory(r.prdPath); nextID != "" {
+		st.setBase(nextID, st.baseFor(storyID))
+	}
+}
+
 // ensureStoryBranch puts the worktree on the branch this story belongs to.
 //
 // This is the invariant the whole feature rests on: when the agent starts, HEAD
@@ -109,9 +124,13 @@ func (s *Session) ensureStoryBranch(ctx context.Context, r *run, storyID, title 
 
 	st := s.stackState(r)
 	branch := st.branchFor(storyID, title)
-	// Recorded before the checkout: the branch belongs to this story from the
-	// moment it is named, and a run that dies mid-checkout has still claimed it.
-	_ = s.recordBranch(r.prdName, storyID, branch)
+	// Recorded before the checkout, with the branch it will be cut from: the
+	// branch belongs to this story from the moment it is named, a run that dies
+	// mid-checkout has still claimed it, and the base is what lets whatever
+	// publishes later rebuild the stack without the run's in-memory state.
+	_ = s.recordStoryBranch(r.prdName, StoryBranch{
+		StoryID: storyID, Branch: branch, Base: st.baseFor(storyID),
+	})
 
 	if currentBranch(ctx, r.workDir) == branch {
 		return nil

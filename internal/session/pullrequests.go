@@ -110,9 +110,9 @@ func branchesOf(git PRDGitState) map[string]bool {
 	if git.Branch != "" {
 		branches[git.Branch] = true
 	}
-	for _, branch := range git.Stories {
-		if branch != "" {
-			branches[branch] = true
+	for _, story := range git.StoryBranches() {
+		if story.Branch != "" {
+			branches[story.Branch] = true
 		}
 	}
 	return branches

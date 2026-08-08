@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/dripcoder/loop/internal/chief/config"
 	"github.com/dripcoder/loop/internal/chief/prd"
@@ -56,7 +57,13 @@ type PRDGitState struct {
 	Layout BranchLayout `json:"layout,omitempty"`
 	// Branch is the PRD's own run branch, in per-PRD mode.
 	Branch string `json:"branch,omitempty"`
-	// Stories maps a story ID to the branch its commit landed on.
+	// Base is the branch that run branch was cut from.
+	Base string `json:"base,omitempty"`
+	// Branches is every story branch a run created, in the order it created them.
+	Branches []StoryBranch `json:"branches,omitempty"`
+	// Stories maps a story ID to the branch its commit landed on. Written by
+	// versions of Loop from before Branches existed; read through StoryBranches,
+	// and no longer written.
 	Stories map[string]string `json:"stories,omitempty"`
 	// PullRequests caches the last pull request seen for a branch, keyed by
 	// branch name. GitHub remains the source of truth; this exists so the links
@@ -66,22 +73,138 @@ type PRDGitState struct {
 	PullRequests map[string]PRRef `json:"pullRequests,omitempty"`
 }
 
-// recordBranch stores the branch a run used, for the PRD as a whole when storyID
-// is empty, or for one story.
+// StoryBranch is one story's branch as a run created it, together with the
+// branch it was cut from.
 //
-// Written as it happens rather than at the end of a run: a run that is stopped
-// or crashes has still created the branch, and a UI that cannot name it leaves
-// the user hunting through `git branch` for their own work.
-func (s *Session) recordBranch(prd, storyID, branch string) error {
+// An ordered slice rather than the story-to-branch map it supersedes, because
+// publishing a stack has to walk the branches from the bottom upwards and the
+// creation order is the only record of what "below" means. A JSON object has no
+// order and Go randomises map iteration, so the map could not express a stack at
+// all.
+type StoryBranch struct {
+	StoryID string `json:"storyId"`
+	Branch  string `json:"branch"`
+	// Base is the branch this one was cut from — the story below it in the stack,
+	// or the trunk at the bottom. Empty means unknown, which is what a sidecar
+	// written before bases were recorded reads back as.
+	Base string `json:"base,omitempty"`
+	// NoCommit records that the story produced nothing to publish. Written after
+	// the attempt rather than with the branch, because whether a story commits is
+	// not knowable when its branch is created.
+	NoCommit bool `json:"noCommit,omitempty"`
+}
+
+// BaseIsKnown reports whether this branch says what it was cut from.
+func (b StoryBranch) BaseIsKnown() bool { return b.Base != "" }
+
+// HasSomethingToPublish reports whether there is a branch here worth a pull
+// request. A story that committed nothing has a branch identical to the one below
+// it, so publishing it would open an empty pull request.
+func (b StoryBranch) HasSomethingToPublish() bool { return b.Branch != "" && !b.NoCommit }
+
+// StoryBranches is every story branch a run recorded, in the order it created
+// them.
+//
+// A sidecar written before the order and the bases existed has only the
+// story-to-branch map, which carries neither. It is read rather than refused,
+// ordered by story ID because that is the closest a map gets to creation order,
+// and every entry reports its base as unknown.
+func (g PRDGitState) StoryBranches() []StoryBranch {
+	if len(g.Branches) > 0 {
+		return g.Branches
+	}
+	ids := make([]string, 0, len(g.Stories))
+	for id := range g.Stories {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]StoryBranch, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, StoryBranch{StoryID: id, Branch: g.Stories[id]})
+	}
+	return out
+}
+
+// BasesAreKnown reports whether every recorded branch says what it was cut from.
+// It is false for a sidecar written before bases were recorded, which is the one
+// case where a stack cannot be reconstructed from the record alone.
+func (g PRDGitState) BasesAreKnown() bool {
+	for _, b := range g.StoryBranches() {
+		if !b.BaseIsKnown() {
+			return false
+		}
+	}
+	return true
+}
+
+// BranchFor is the branch a story's commit landed on, empty when the story has
+// none recorded.
+func (g PRDGitState) BranchFor(storyID string) string {
+	for _, b := range g.StoryBranches() {
+		if b.StoryID == storyID {
+			return b.Branch
+		}
+	}
+	return ""
+}
+
+// recordRunBranch stores the PRD's own run branch, and the branch it was cut from
+// when this run is the one creating it.
+//
+// Written as it happens rather than at the end of a run: a run that is stopped or
+// crashes has still created the branch, and a UI that cannot name it leaves the
+// user hunting through `git branch` for their own work.
+//
+// An empty base leaves what is on disk alone. Adopting an existing branch — the
+// ordinary resumed-run case — says nothing about where that branch came from, and
+// overwriting the earlier run's answer with this run's checkout would be a guess.
+func (s *Session) recordRunBranch(prd, branch, base string) error {
 	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
-		if storyID == "" {
-			env.Git.Branch = branch
-			return
+		env.Git.Branch = branch
+		if base != "" {
+			env.Git.Base = base
 		}
-		if env.Git.Stories == nil {
-			env.Git.Stories = map[string]string{}
+	})
+}
+
+// recordStoryBranch appends a story's branch and its base, in the order the run
+// creates them.
+//
+// Re-recording a story keeps its position: a resumed run walks the same stories
+// again, and reordering the record would rearrange a stack that git has already
+// built.
+func (s *Session) recordStoryBranch(prd string, entry StoryBranch) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		// Migrated on the first write rather than on read, so a PRD that ran under
+		// an older Loop keeps the branches it recorded then instead of having them
+		// hidden by this one entry.
+		env.Git.Branches = env.Git.StoryBranches()
+		env.Git.Branches = upsertStoryBranch(env.Git.Branches, entry)
+	})
+}
+
+// upsertStoryBranch replaces a story's entry in place, or appends it.
+func upsertStoryBranch(branches []StoryBranch, entry StoryBranch) []StoryBranch {
+	for i := range branches {
+		if branches[i].StoryID == entry.StoryID {
+			branches[i] = entry
+			return branches
 		}
-		env.Git.Stories[storyID] = branch
+	}
+	return append(branches, entry)
+}
+
+// recordNoCommit marks a story's branch as having produced nothing to publish.
+func (s *Session) recordNoCommit(prd, storyID string) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		env.Git.Branches = env.Git.StoryBranches()
+		for i := range env.Git.Branches {
+			if env.Git.Branches[i].StoryID == storyID {
+				env.Git.Branches[i].NoCommit = true
+				return
+			}
+		}
 	})
 }
 

@@ -363,15 +363,25 @@ func showWorkflow(s *session.Session, name string, asJSON bool) error {
 	// installed — and reporting that is the point of showing it here.
 	resolved, resolveErr := s.ResolveImplementationAgent(name)
 
+	// What the runs did with branches, read from the sidecar rather than from a
+	// live run — which is the point: this process performed none of them.
+	git, _ := s.PRDGitFor(name)
+
 	if asJSON {
 		return emitJSON(struct {
-			Workflow      session.PRDWorkflow `json:"workflow"`
-			ResolvedAgent string              `json:"resolvedAgent"`
-			ResolveError  string              `json:"resolveError,omitempty"`
+			Workflow      session.PRDWorkflow   `json:"workflow"`
+			ResolvedAgent string                `json:"resolvedAgent"`
+			ResolveError  string                `json:"resolveError,omitempty"`
+			Git           session.PRDGitState   `json:"git"`
+			Branches      []session.StoryBranch `json:"branches"`
+			BasesKnown    bool                  `json:"basesKnown"`
 		}{
 			Workflow:      workflow,
 			ResolvedAgent: resolved,
 			ResolveError:  errText(resolveErr),
+			Git:           git,
+			Branches:      git.StoryBranches(),
+			BasesKnown:    git.BasesAreKnown(),
 		})
 	}
 
@@ -381,18 +391,47 @@ func showWorkflow(s *session.Session, name string, asJSON bool) error {
 	if resolveErr != nil {
 		fmt.Fprintf(w, "resolve error\t%s\n", resolveErr)
 	}
-	fmt.Fprintf(w, "branch layout\t%s\n", recordedLayout(s, name))
+	fmt.Fprintf(w, "branch layout\t%s\n", recordedLayout(git))
+	fmt.Fprintf(w, "run branch\t%s\n", orNone(git.Branch))
+	fmt.Fprintf(w, "run branch base\t%s\n", orNone(git.Base))
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return printStoryBranches(git)
+}
+
+// printStoryBranches lists the story branches a run created, in creation order,
+// with what each was based on. Order is the whole point — it is what a stack
+// means — so it is printed as a list rather than a keyed table.
+func printStoryBranches(git session.PRDGitState) error {
+	branches := git.StoryBranches()
+	if len(branches) == 0 {
+		return nil
+	}
+
+	fmt.Printf("\nbranches (in creation order)\n")
+	w := table()
+	for _, b := range branches {
+		fmt.Fprintf(w, "%s\t%s\ton %s%s\n", b.StoryID, b.Branch, orNone(b.Base), publishNote(b))
+	}
 	return w.Flush()
+}
+
+// publishNote marks the branches that publishing must skip.
+func publishNote(b session.StoryBranch) string {
+	if b.HasSomethingToPublish() {
+		return ""
+	}
+	return "\tno commit"
 }
 
 // recordedLayout reports the layout a run has chosen for this PRD. A PRD that has
 // never run has none, which is not an error worth failing the command over.
-func recordedLayout(s *session.Session, name string) string {
-	state, err := s.PRDGitFor(name)
-	if err != nil || state.Layout == "" {
+func recordedLayout(git session.PRDGitState) string {
+	if git.Layout == "" {
 		return "not chosen yet"
 	}
-	return string(state.Layout)
+	return string(git.Layout)
 }
 
 func orNone(v string) string {

@@ -352,7 +352,7 @@ func (s *Session) attachGitState(detail *PRDDetail) {
 	detail.PR = cachedPR(git, detail.Branch)
 
 	for i := range detail.Stories {
-		branch := git.Stories[detail.Stories[i].ID]
+		branch := git.BranchFor(detail.Stories[i].ID)
 		if branch == "" {
 			continue
 		}

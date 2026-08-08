@@ -205,10 +205,29 @@ Per-PRD settings are stored in a sidecar beside the document:
     "implementationAgent": "codex"
   },
   "git": {
-    "layout": "one-branch"
+    "layout": "branch-per-story",
+    "branch": "chief/checkout",
+    "base": "main",
+    "branches": [
+      { "storyId": "US-001", "branch": "loop/checkout/us-001-cart", "base": "main" },
+      { "storyId": "US-002", "branch": "loop/checkout/us-002-tax", "base": "loop/checkout/us-001-cart", "noCommit": true },
+      { "storyId": "US-003", "branch": "loop/checkout/us-003-vat", "base": "loop/checkout/us-001-cart" }
+    ]
   }
 }
 ```
+
+The `branches` list is written as the run creates each branch, not when the run
+ends, and its **order is the stack**: each entry's `base` is the branch below it,
+and the bottom one's base is the trunk. A story that committed nothing is marked
+`noCommit` — it has nothing to publish, and the story above it is based on the
+nearest branch below that does. That is everything publishing needs, which is
+why it is on disk: the run's in-memory stack is gone by the time anyone presses
+publish.
+
+A sidecar written by an older Loop has a `stories` object instead — a story-to-branch
+map with no order and no bases. It is still read; its bases are reported as
+unknown rather than guessed.
 
 It is a sidecar rather than a block inside `prd.md` because `prd.md` is
 authored and rewritten by the agent; asking it to preserve Loop's bookkeeping

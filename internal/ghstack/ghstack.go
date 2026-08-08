@@ -191,9 +191,27 @@ type Manual struct{}
 
 func (Manual) Name() string { return "manual" }
 
-// Init is a no-op: with no extension there is no stack object to create. The
-// branch itself is created by the session before the first story runs.
-func (Manual) Init(ctx context.Context, dir, base, first string) error { return nil }
+// Init puts the checkout on the bottom branch, creating it if it is not there.
+//
+// There is no stack object to create without the extension, but the branch the
+// first story commits on still has to exist, and with no extension nothing else
+// is going to create it — the session's caller relies on Init for exactly that.
+// An existing branch is adopted rather than refused, which is the ordinary
+// resumed-run case.
+func (Manual) Init(ctx context.Context, dir, base, first string) error {
+	if localBranchExists(ctx, dir, first) {
+		_, err := run(ctx, dir, "git", "checkout", first)
+		return err
+	}
+	_, err := run(ctx, dir, "git", "checkout", "-b", first)
+	return err
+}
+
+// localBranchExists reports whether a branch exists in this repository.
+func localBranchExists(ctx context.Context, dir, branch string) bool {
+	_, err := run(ctx, dir, "git", "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
+}
 
 func (Manual) Submit(ctx context.Context, s Spec) (PR, error) {
 	if _, err := run(ctx, s.Dir, "git", "push", "-u", "origin", s.Head); err != nil {

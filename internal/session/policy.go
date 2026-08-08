@@ -28,18 +28,20 @@ import (
 // impossible. The worktree path has always adopted an existing worktree; this
 // is the same courtesy for branches.
 func (s *Session) ensureRunBranch(ctx context.Context, root, prdName, branch string) error {
-	// Recorded whether or not the branch had to be created: adopting an existing
-	// one is the ordinary resumed-run case, and the PRD still belongs to it.
-	// A sidecar that cannot be written is not worth failing a run over.
-	_ = s.recordBranch(prdName, "", branch)
-
-	if currentBranch(ctx, root) == branch {
-		return nil
-	}
-
 	exists, err := branchExists(ctx, root, branch)
 	if err != nil {
 		return fmt.Errorf("check for branch %s: %w", branch, err)
+	}
+
+	// Recorded whether or not the branch had to be created: adopting an existing
+	// one is the ordinary resumed-run case, and the PRD still belongs to it. Its
+	// base is only this run's to record when this run is cutting it — git.CreateBranch
+	// cuts from the current checkout. A sidecar that cannot be written is not
+	// worth failing a run over.
+	_ = s.recordRunBranch(prdName, branch, baseOfNewBranch(ctx, root, exists))
+
+	if currentBranch(ctx, root) == branch {
+		return nil
 	}
 	if exists {
 		if err := gitRun(ctx, root, "checkout", branch); err != nil {
@@ -61,6 +63,16 @@ func (s *Session) ensureRunBranch(ctx context.Context, root, prdName, branch str
 		Git: &GitEvent{Op: "branch", Branch: branch, State: "ok"},
 	})
 	return nil
+}
+
+// baseOfNewBranch is the branch a run is about to cut from, and nothing for a
+// branch that already exists — that one was cut by an earlier run, which recorded
+// its own answer.
+func baseOfNewBranch(ctx context.Context, root string, exists bool) string {
+	if exists {
+		return ""
+	}
+	return currentBranch(ctx, root)
 }
 
 // branchLabel names the current branch, falling back to wording that still
@@ -369,6 +381,7 @@ func (s *Session) provisionWorktree(
 	}
 
 	step(1, "create-branch", "running", branch)
+	s.recordWorktreeBranch(ctx, root, prdName, branch)
 	_ = git.PruneWorktrees(root)
 
 	step(2, "add-worktree", "running", path)
@@ -391,6 +404,24 @@ func (s *Session) provisionWorktree(
 	}
 	step(3, "run-setup", "ok", "")
 	return path, nil
+}
+
+// recordWorktreeBranch records the branch a worktree run will commit on, before
+// the worktree exists.
+//
+// git.CreateWorktree cuts a new branch from the repository's default branch and
+// adopts an existing one untouched, so that default is the base — and only when
+// the branch is new. Recording here rather than in ensureRunBranch is not
+// optional: the worktree path never goes through it, and a one-branch run in a
+// worktree would otherwise leave nothing on disk to publish.
+func (s *Session) recordWorktreeBranch(ctx context.Context, root, prdName, branch string) {
+	exists, err := branchExists(ctx, root, branch)
+	if err == nil && exists {
+		_ = s.recordRunBranch(prdName, branch, "")
+		return
+	}
+	base, _ := git.GetDefaultBranch(root)
+	_ = s.recordRunBranch(prdName, branch, base)
 }
 
 // runSetup executes the worktree setup command, streaming its output.
