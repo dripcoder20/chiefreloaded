@@ -1,7 +1,7 @@
 package session
 
-// Per-PRD workflow metadata: which agent implements it, whether it stacks a
-// pull request per story, and where its user stories are published as issues.
+// Per-PRD workflow metadata: which agent implements it, and what its runs have
+// done with branches.
 //
 // It lives in a sidecar (.chief/prds/<name>/loop.json) rather than in prd.md
 // for one reason: prd.md is authored and rewritten by the agent. Asking it to
@@ -16,6 +16,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/dripcoder/loop/internal/chief/config"
+	"github.com/dripcoder/loop/internal/chief/prd"
 )
 
 // prdMetaFile is the sidecar's name inside a PRD's directory.
@@ -31,10 +34,6 @@ type PRDWorkflow struct {
 	// means "use the configured default", which is deliberately not resolved at
 	// save time: the default may legitimately change later.
 	ImplementationAgent string `json:"implementationAgent,omitempty"`
-	// StackPerStory opens a stacked pull request per user story. Off unless a
-	// saved preference says otherwise; it only configures the later run and
-	// creates no branches or pull requests by itself.
-	StackPerStory bool `json:"stackPerStory,omitempty"`
 }
 
 // prdMetaEnvelope is the on-disk shape, versioned so the schema can move.
@@ -52,6 +51,9 @@ type prdMetaEnvelope struct {
 // the suggested branch at the safety question. What a run actually used is the
 // only thing that stays true, so it is recorded rather than recomputed.
 type PRDGitState struct {
+	// Layout is how the PRD's runs arrange their commits, as chosen at the start
+	// of the first run. Empty means no run has chosen yet.
+	Layout BranchLayout `json:"layout,omitempty"`
 	// Branch is the PRD's own run branch, in per-PRD mode.
 	Branch string `json:"branch,omitempty"`
 	// Stories maps a story ID to the branch its commit landed on.
@@ -80,6 +82,18 @@ func (s *Session) recordBranch(prd, storyID, branch string) error {
 			env.Git.Stories = map[string]string{}
 		}
 		env.Git.Stories[storyID] = branch
+	})
+}
+
+// recordLayout stores the branch layout a run chose, so later runs of the same
+// PRD preselect it rather than asking again from scratch.
+//
+// Written as the run starts, before any branch exists: what the commits are
+// arranged into has to be known to whatever publishes them later, and a run that
+// dies after its first commit has still settled the question.
+func (s *Session) recordLayout(prd string, layout BranchLayout) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		env.Git.Layout = layout
 	})
 }
 
@@ -242,8 +256,8 @@ func (s *Session) PRDWorkflowFor(name string) (PRDWorkflow, error) {
 	return env.Workflow, nil
 }
 
-// SavePRDWorkflow writes a PRD's workflow configuration, leaving any recorded
-// issue references intact.
+// SavePRDWorkflow writes a PRD's workflow configuration, leaving what its runs
+// have recorded about git intact.
 func (s *Session) SavePRDWorkflow(name string, w PRDWorkflow) error {
 	path, err := s.prdMetaPath(name)
 	if err != nil {
@@ -309,21 +323,75 @@ type AgentDefaults struct {
 	Implementation string `json:"implementation"`
 }
 
-// stacksPerStory reports whether a run for this PRD should give each story its
-// own branch and pull request.
+// layoutFor is the branch layout a run for this PRD uses.
 //
-// The PRD's own choice wins over the project default. That is the point of
-// offering it when the PRD is created: one PRD in a project can be worth
-// stacking without turning every PRD into a stack, and the reverse.
+// The PRD's recorded choice wins: it was made with the work in front of the user,
+// at the start of a run, which is the whole point of asking there. Nothing
+// recorded falls back to the project default, and git mode `off` overrides both —
+// a project that has asked for git to be left alone gets no branches whatever a
+// previous run recorded.
 //
-// An unreadable sidecar falls back to the project setting rather than failing
-// the run — the run is the thing the user asked for, and this is a preference.
-func (s *Session) stacksPerStory(prd string) bool {
-	workflow, err := s.PRDWorkflowFor(prd)
-	if err == nil && workflow.StackPerStory {
-		return true
+// An unreadable sidecar falls back rather than failing the run: the run is what
+// the user asked for, and one branch is the conservative answer.
+func (s *Session) layoutFor(prd string) BranchLayout {
+	if s.LoopConfig().Git.Mode == config.GitModeOff {
+		return LayoutOneBranch
 	}
-	return s.LoopConfig().PerStory()
+	state, err := s.PRDGitFor(prd)
+	if err == nil && state.Layout.isKnown() {
+		return state.Layout
+	}
+	return s.defaultLayout()
+}
+
+// defaultLayout is what the layout question preselects for a PRD that has never
+// recorded one.
+//
+// One branch, unless the project has explicitly been configured for per-story
+// mode. A user who has not engaged with the question never has one PRD turn into
+// nine pull requests, and a user who configured per-story mode is not silently
+// overruled.
+func (s *Session) defaultLayout() BranchLayout {
+	if s.LoopConfig().PerStory() {
+		return LayoutBranchPerStory
+	}
+	return LayoutOneBranch
+}
+
+// layoutIsSettled reports whether the PRD has a commit behind its recorded
+// layout, which puts the choice beyond this run's reach.
+//
+// Changing the layout after a story has committed would leave the PRD's commits
+// arranged one way and its record saying another, and nothing could publish that
+// coherently.
+func (s *Session) layoutIsSettled(prd string) bool {
+	state, err := s.PRDGitFor(prd)
+	if err != nil || !state.Layout.isKnown() {
+		return false
+	}
+	return s.hasCommittedStory(prd)
+}
+
+// hasCommittedStory reports whether any story of the PRD is done.
+//
+// The PRD document is the record that survives everything — a restart, a
+// different machine, a deleted sidecar — so a completed story is what "has
+// committed" is read from.
+func (s *Session) hasCommittedStory(prdName string) bool {
+	path, err := s.PRDPath(prdName)
+	if err != nil {
+		return false
+	}
+	doc, err := prd.LoadPRD(path)
+	if err != nil {
+		return false
+	}
+	for _, story := range doc.UserStories {
+		if story.Passes {
+			return true
+		}
+	}
+	return false
 }
 
 // agentIsAvailable reports whether an agent CLI was found on this machine.

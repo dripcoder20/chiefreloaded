@@ -812,8 +812,17 @@ export async function adjustBudget(delta: number): Promise<void> {
   await guard(() => api.run.setAttemptBudget(run.id, run.attemptBudget + delta));
 }
 
-export async function answerQuestion(id: string, optionId: string): Promise<void> {
-  await guard(() => api.run.answer(id, { optionId } as never));
+/**
+ * Resolves a question. The fields ride with the option because they qualify it:
+ * the branch layout and the branch name are part of the same decision as "where
+ * should this run commit", not a second prompt after it.
+ */
+export async function answerQuestion(
+  id: string,
+  optionId: string,
+  inputs: Record<string, string> = {},
+): Promise<void> {
+  await guard(() => api.run.answer(id, { optionId, inputs } as never));
 }
 
 async function guard(fn: () => Promise<unknown>): Promise<void> {

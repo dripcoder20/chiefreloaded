@@ -128,7 +128,7 @@ func TestSecondRunInTheSameDirectoryAsks(t *testing.T) {
 // working tree under them.
 func TestPerStoryAlwaysAsksEvenOnAFeatureBranch(t *testing.T) {
 	p := Project{IsGitRepo: true, Branch: "feature/checkout"}
-	q := branchSafetyQuestion(p, perStoryConfig(), "checkout", askContext{perStory: true})
+	q := branchSafetyQuestion(p, perStoryConfig(), "checkout", askContext{layout: LayoutBranchPerStory, layoutOffered: true})
 	if q == nil {
 		t.Fatal("per-story mode must not start in the working checkout without asking")
 	}
@@ -140,7 +140,7 @@ func TestPerStoryAlwaysAsksEvenOnAFeatureBranch(t *testing.T) {
 // With requireWorktree on — the default — there is no way to say "run here".
 func TestPerStoryOffersNoEscapeHatchByDefault(t *testing.T) {
 	p := Project{IsGitRepo: true, Branch: "feature/checkout"}
-	q := branchSafetyQuestion(p, perStoryConfig(), "checkout", askContext{perStory: true})
+	q := branchSafetyQuestion(p, perStoryConfig(), "checkout", askContext{layout: LayoutBranchPerStory, layoutOffered: true})
 
 	for _, o := range q.Options {
 		if o.ID == optHere {
@@ -153,7 +153,7 @@ func TestPerStoryOffersTheEscapeHatchWhenConfigured(t *testing.T) {
 	cfg := perStoryConfig()
 	cfg.Git.RequireWorktree = false
 
-	q := branchSafetyQuestion(Project{IsGitRepo: true, Branch: "feature/x"}, cfg, "checkout", askContext{perStory: true})
+	q := branchSafetyQuestion(Project{IsGitRepo: true, Branch: "feature/x"}, cfg, "checkout", askContext{layout: LayoutBranchPerStory, layoutOffered: true})
 
 	var found bool
 	for _, o := range q.Options {
@@ -176,21 +176,21 @@ func TestPerStoryOffersTheEscapeHatchWhenConfigured(t *testing.T) {
 // cannot decline.
 func TestEveryBranchSafetyQuestionCanBeCancelled(t *testing.T) {
 	cases := []struct {
-		name     string
-		p        Project
-		cfg      config.LoopConfig
-		others   bool
-		perStory bool
+		name   string
+		p      Project
+		cfg    config.LoopConfig
+		others bool
+		layout BranchLayout
 	}{
-		{"protected", Project{IsGitRepo: true, Branch: "main"}, *config.DefaultLoop(), false, false},
-		{"in use", Project{IsGitRepo: true, Branch: "feature/x"}, *config.DefaultLoop(), true, false},
-		{"per-story", Project{IsGitRepo: true, Branch: "feature/x"}, perStoryConfig(), false, true},
-		{"ordinary", Project{IsGitRepo: true, Branch: "feature/x"}, *config.DefaultLoop(), false, false},
+		{"protected", Project{IsGitRepo: true, Branch: "main"}, *config.DefaultLoop(), false, LayoutOneBranch},
+		{"in use", Project{IsGitRepo: true, Branch: "feature/x"}, *config.DefaultLoop(), true, LayoutOneBranch},
+		{"per-story", Project{IsGitRepo: true, Branch: "feature/x"}, perStoryConfig(), false, LayoutBranchPerStory},
+		{"ordinary", Project{IsGitRepo: true, Branch: "feature/x"}, *config.DefaultLoop(), false, LayoutOneBranch},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			q := branchSafetyQuestion(tc.p, tc.cfg, "checkout", askContext{othersInRoot: tc.others, perStory: tc.perStory})
+			q := branchSafetyQuestion(tc.p, tc.cfg, "checkout", askContext{othersInRoot: tc.others, layout: tc.layout, layoutOffered: true})
 			if q == nil {
 				t.Fatal("expected a question")
 			}

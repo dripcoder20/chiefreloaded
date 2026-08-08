@@ -107,7 +107,7 @@ func TestRecordBranch_leavesTheWorkflowIntact(t *testing.T) {
 	root := openTestProject(t, s)
 	writePRD(t, root, "checkout", samplePRD)
 
-	want := PRDWorkflow{ImplementationAgent: "codex", StackPerStory: true}
+	want := PRDWorkflow{ImplementationAgent: "codex"}
 	if err := s.SavePRDWorkflow("checkout", want); err != nil {
 		t.Fatal(err)
 	}

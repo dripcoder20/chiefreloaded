@@ -175,11 +175,20 @@ record of finished executions.
 
 ## Implementation workflow
 
-### Stacked pull requests
+### Branch layout
 
-The New PRD tab's **Stack a pull request per user story** option is off unless
-you turn it on. It is saved as PRD metadata and applied when implementation
-starts; choosing it creates no branches and no pull requests by itself.
+How a run arranges its commits is chosen when the run starts, on the same
+question that asks where it should commit: **One branch for the whole PRD**
+(preselected) or **A branch per story**. The choice is recorded for the PRD and
+preselected next time. Once a story has committed the layout is settled and is
+reported rather than offered — the commits and the record would otherwise
+disagree.
+
+A run in a directory that is not a git repository, or with `git.mode: off`,
+is not asked and creates no branches.
+
+A branch per story switches the checkout between stories, so with
+`git.requireWorktree` on — the default — it is only allowed in a worktree.
 
 ### Where workflow settings live
 
@@ -193,8 +202,10 @@ Per-PRD settings are stored in a sidecar beside the document:
 {
   "version": 1,
   "workflow": {
-    "implementationAgent": "codex",
-    "stackPerStory": true
+    "implementationAgent": "codex"
+  },
+  "git": {
+    "layout": "one-branch"
   }
 }
 ```

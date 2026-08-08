@@ -381,8 +381,18 @@ func showWorkflow(s *session.Session, name string, asJSON bool) error {
 	if resolveErr != nil {
 		fmt.Fprintf(w, "resolve error\t%s\n", resolveErr)
 	}
-	fmt.Fprintf(w, "stack per story\t%v\n", workflow.StackPerStory)
+	fmt.Fprintf(w, "branch layout\t%s\n", recordedLayout(s, name))
 	return w.Flush()
+}
+
+// recordedLayout reports the layout a run has chosen for this PRD. A PRD that has
+// never run has none, which is not an error worth failing the command over.
+func recordedLayout(s *session.Session, name string) string {
+	state, err := s.PRDGitFor(name)
+	if err != nil || state.Layout == "" {
+		return "not chosen yet"
+	}
+	return string(state.Layout)
 }
 
 func orNone(v string) string {

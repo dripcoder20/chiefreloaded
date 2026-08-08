@@ -73,12 +73,22 @@ func branchLabel(branch string) string {
 }
 
 // askContext is what the caller has resolved about this particular run, as
-// opposed to what the project config says in general. Per-story-ness is a
-// per-PRD decision now, so the question is told rather than deriving it.
+// opposed to what the project config says in general. The layout is a per-PRD
+// decision now, so the question is told rather than deriving it.
 type askContext struct {
-	perStory     bool
-	othersInRoot bool
+	// layout is preselected: what this PRD recorded, or the project default.
+	layout BranchLayout
+	// layoutOffered is false where the layout is not this run's to arrange at
+	// all — git mode `off`, which creates no branches either way.
+	layoutOffered bool
+	// layoutSettled means the layout is shown but cannot be changed, because a
+	// story has already committed under it.
+	layoutSettled bool
+	othersInRoot  bool
 }
+
+// perStory reports whether this run gives each story its own branch.
+func (a askContext) perStory() bool { return a.layout == LayoutBranchPerStory }
 
 // Option IDs for the branch-safety question.
 const (
@@ -86,6 +96,12 @@ const (
 	optBranch   = "branch"
 	optHere     = "here"
 	optCancel   = "cancel"
+)
+
+// Input keys the branch-safety answer may carry.
+const (
+	inputBranch = "branch"
+	inputLayout = "layout"
 )
 
 // branchSafetyQuestion returns the decision a run needs before it may start.
@@ -105,9 +121,14 @@ const (
 //   - Per-story mode is on. It switches branches between stories, which inside
 //     the user's own checkout would move their working tree under them while
 //     they are using it.
+//
+// The layout rides on this question as an Input rather than arriving as a second
+// prompt of its own, because two modal decisions before a run starts is one too
+// many — and because where the commits go and how they are arranged are one
+// decision to the person making them.
 func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask askContext) *Question {
 	protected := p.Branch != "" && git.IsProtectedBranch(p.Branch)
-	perStory := ask.perStory
+	perStory := ask.perStory()
 	othersInRoot := ask.othersInRoot
 
 	worktreeHint := filepath.Join(".chief", "worktrees", prdName)
@@ -118,10 +139,13 @@ func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask 
 		PRD:           prdName,
 		DefaultOption: optWorktree,
 		Inputs: []Input{{
-			Key:   "branch",
+			Key:   inputBranch,
 			Label: "Branch name",
 			Value: suggested,
 		}},
+	}
+	if ask.layoutOffered {
+		q.Inputs = append(q.Inputs, layoutInput(ask, cfg))
 	}
 
 	switch {
@@ -183,6 +207,38 @@ func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask 
 	return q
 }
 
+// layoutInput is the layout half of the branch-safety decision.
+//
+// Worded as an arrangement of commits rather than as a pull-request choice: "a
+// branch per story" leaves both publishing options open, while "stacked pull
+// requests" would imply a decision that is not being made yet.
+func layoutInput(ask askContext, cfg config.LoopConfig) Input {
+	in := Input{
+		Key:   inputLayout,
+		Label: "Branch layout",
+		Value: string(ask.layout),
+	}
+
+	if ask.layoutSettled {
+		in.ReadOnly = true
+		in.Value = string(ask.layout)
+		in.Hint = "Settled: this PRD already has commits arranged this way."
+		return in
+	}
+
+	perStory := Choice{Value: string(LayoutBranchPerStory), Label: LayoutBranchPerStory.Label()}
+	if cfg.Git.RequireWorktree {
+		// Saying so here is the difference between a choice and a trap: the run
+		// is refused later if these two answers disagree.
+		perStory.Hint = "needs a worktree"
+	}
+	in.Choices = []Choice{
+		{Value: string(LayoutOneBranch), Label: LayoutOneBranch.Label()},
+		perStory,
+	}
+	return in
+}
+
 // prepareWorkspace resolves the branch-safety question and sets up wherever the
 // run is going to happen. It returns the working directory.
 func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID string) (string, error) {
@@ -202,10 +258,13 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 		return root, nil
 	}
 
-	q := branchSafetyQuestion(*project, cfg, req.PRD, askContext{
-		perStory:     s.stacksPerStory(req.PRD),
-		othersInRoot: s.othersRunningIn(root, req.PRD),
-	})
+	ask := askContext{
+		layout:        s.layoutFor(req.PRD),
+		layoutOffered: cfg.Git.Mode != config.GitModeOff,
+		layoutSettled: s.layoutIsSettled(req.PRD),
+		othersInRoot:  s.othersRunningIn(root, req.PRD),
+	}
+	q := branchSafetyQuestion(*project, cfg, req.PRD, ask)
 	if q == nil {
 		return root, nil
 	}
@@ -215,16 +274,29 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 	if err != nil {
 		return "", err
 	}
+	if answer.OptionID == optCancel {
+		return "", fmt.Errorf("cancelled")
+	}
 
-	branch := strings.TrimSpace(answer.Inputs["branch"])
+	layout, err := resolveLayout(req.PRD, ask, answer)
+	if err != nil {
+		return "", err
+	}
+	if err := requireWorktreeFor(layout, cfg, answer.OptionID); err != nil {
+		return "", err
+	}
+	// Recorded before anything is created, so what the branches mean is on disk
+	// from the moment the run starts arranging them.
+	if ask.layoutOffered {
+		_ = s.recordLayout(req.PRD, layout)
+	}
+
+	branch := strings.TrimSpace(answer.Inputs[inputBranch])
 	if branch == "" {
 		branch = "chief/" + req.PRD
 	}
 
 	switch answer.OptionID {
-	case optCancel:
-		return "", fmt.Errorf("cancelled")
-
 	case optHere:
 		return root, nil
 
@@ -237,6 +309,45 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 	default: // worktree
 		return s.provisionWorktree(ctx, root, req.PRD, branch, cfg)
 	}
+}
+
+// resolveLayout is the layout this run will use, given what was offered and what
+// came back.
+//
+// An answer carrying nothing means the preselected layout, which is how
+// auto-answering and every caller that does not care about layout keep working.
+func resolveLayout(prdName string, ask askContext, answer Answer) (BranchLayout, error) {
+	chosen := BranchLayout(strings.TrimSpace(answer.Inputs[inputLayout]))
+	if chosen == "" || !ask.layoutOffered {
+		return ask.layout, nil
+	}
+	if !chosen.isKnown() {
+		return "", fmt.Errorf("%q is not a branch layout", chosen)
+	}
+	if ask.layoutSettled && chosen != ask.layout {
+		return "", fmt.Errorf(
+			"%s already has commits arranged as %q; its layout cannot be changed",
+			prdName, ask.layout.Label())
+	}
+	return chosen, nil
+}
+
+// requireWorktreeFor refuses the one combination the layout cannot honour.
+//
+// Per-story branches switch the checkout between stories, so running them in the
+// user's own working tree would move it under them mid-run. requireWorktree is on
+// by default for exactly that reason, and refusing here — with the reason — is
+// better than starting a run that would do it anyway.
+func requireWorktreeFor(layout BranchLayout, cfg config.LoopConfig, optionID string) error {
+	if layout != LayoutBranchPerStory || !cfg.Git.RequireWorktree {
+		return nil
+	}
+	if optionID == optWorktree {
+		return nil
+	}
+	return fmt.Errorf(
+		"%q needs a worktree: each story switches branch, which would move this checkout under you. "+
+			"Start again and choose to create a worktree", layout.Label())
 }
 
 // provisionWorktree creates the worktree and runs the configured setup command,

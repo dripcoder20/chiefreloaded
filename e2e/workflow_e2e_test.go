@@ -39,7 +39,6 @@ func writeWorkflow(t *testing.T, root, prd string, workflow map[string]any) {
 type workflowJSON struct {
 	Workflow struct {
 		ImplementationAgent string `json:"implementationAgent"`
-		StackPerStory       bool   `json:"stackPerStory"`
 	} `json:"workflow"`
 	ResolvedAgent string `json:"resolvedAgent"`
 	ResolveError  string `json:"resolveError"`
@@ -64,9 +63,6 @@ func TestWorkflowDefaultsForAPRDWithNoSidecar(t *testing.T) {
 	root := newProject(t)
 
 	got := readWorkflow(t, root, "main")
-	if got.Workflow.StackPerStory {
-		t.Error("stacked PRs must be off by default")
-	}
 	if got.ResolveError != "" {
 		t.Errorf("resolving the agent must succeed with no sidecar: %s", got.ResolveError)
 	}
@@ -82,17 +78,11 @@ func TestDistinctPhaseAgentsPersistAcrossProcesses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".chief", "config.yaml"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	writeWorkflow(t, root, "main", map[string]any{
-		"implementationAgent": "codex",
-		"stackPerStory":       true,
-	})
+	writeWorkflow(t, root, "main", map[string]any{"implementationAgent": "codex"})
 
 	got := readWorkflow(t, root, "main")
 	if got.Workflow.ImplementationAgent != "codex" {
 		t.Errorf("implementation agent = %q, want codex", got.Workflow.ImplementationAgent)
-	}
-	if !got.Workflow.StackPerStory {
-		t.Error("the stacked-PR choice did not survive")
 	}
 }
 

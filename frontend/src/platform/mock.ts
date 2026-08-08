@@ -135,7 +135,6 @@ let run: RunSnapshot = {
 // reads back. Held in a variable so a save round-trips in browser dev.
 let mockWorkflow = {
   implementationAgent: "codex",
-  stackPerStory: false,
 };
 
 // ------------------------------------------------------------------- usage --

@@ -220,12 +220,65 @@ type Option struct {
 	Destructive bool   `json:"destructive"`
 }
 
-// Input is an editable field attached to a question.
+// Input is a field attached to a question, answered alongside the option rather
+// than as a second prompt.
+//
+// Free text when Choices is empty, a selection between fixed values otherwise.
+// One type rather than two because the answer carries both the same way — as a
+// string under Key — and because the UI renders them in the same row of the same
+// dialog.
 type Input struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
 	Value       string `json:"value"`
 	Placeholder string `json:"placeholder,omitempty"`
+	// Choices, when present, are the only values the answer may carry for this
+	// key. Value is the preselected one.
+	Choices []Choice `json:"choices,omitempty"`
+	// ReadOnly states the field's value without offering to change it. It is not
+	// a disabled control: a decision that has already been made is worth showing,
+	// and worth showing as settled rather than as something the user failed to
+	// reach.
+	ReadOnly bool `json:"readOnly,omitempty"`
+	// Hint explains the field, e.g. why a read-only one can no longer change.
+	Hint string `json:"hint,omitempty"`
+}
+
+// Choice is one value an Input may take.
+type Choice struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Hint  string `json:"hint,omitempty"`
+}
+
+// BranchLayout is how a run arranges its commits across branches.
+//
+// It is decided when a run starts rather than when the PRD is created, because it
+// determines what the commits look like and that is only worth deciding with the
+// work in front of you. It is recorded per PRD so the second run of a PRD does
+// not have to remember what the first one chose.
+type BranchLayout string
+
+const (
+	// LayoutOneBranch puts every story's commit on one branch for the whole PRD.
+	LayoutOneBranch BranchLayout = "one-branch"
+	// LayoutBranchPerStory gives every story its own branch, each based on the
+	// one below it.
+	LayoutBranchPerStory BranchLayout = "branch-per-story"
+)
+
+// Label is the layout as the user was offered it.
+func (l BranchLayout) Label() string {
+	if l == LayoutBranchPerStory {
+		return "A branch per story"
+	}
+	return "One branch for the whole PRD"
+}
+
+// isKnown rejects a layout the engine cannot act on, so a stale or malformed
+// answer fails loudly instead of silently reshaping the run.
+func (l BranchLayout) isKnown() bool {
+	return l == LayoutOneBranch || l == LayoutBranchPerStory
 }
 
 // Answer resolves a Question.
