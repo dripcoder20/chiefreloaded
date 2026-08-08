@@ -51,6 +51,14 @@ type PublishOffer struct {
 	// Layout is how this PRD's commits are arranged, which decides what may be
 	// offered. Empty when publishing is unavailable.
 	Layout BranchLayout `json:"layout,omitempty"`
+	// Stacked reports whether one pull request per story may be offered as well
+	// as one for the whole PRD. Only a run that gave each story its own branch
+	// produced a stack to publish.
+	Stacked bool `json:"stacked"`
+	// StackReason says why a stack cannot be published, when it cannot. Unlike
+	// Reason it is shown: the whole control is present, one of its items is not,
+	// and "the layout does not allow it" is the thing worth saying.
+	StackReason string `json:"stackReason,omitempty"`
 }
 
 // PublishReport is the outcome of one publish.
@@ -83,7 +91,24 @@ func (s *Session) PublishOfferFor(prdName string) PublishOffer {
 	if !s.hasCommittedStory(prdName) {
 		return PublishOffer{Reason: fmt.Sprintf("no story of %s has committed yet, so there is nothing to publish", prdName)}
 	}
-	return PublishOffer{Available: true, Layout: s.layoutFor(prdName)}
+	layout := s.layoutFor(prdName)
+	return PublishOffer{
+		Available:   true,
+		Layout:      layout,
+		Stacked:     layout == LayoutBranchPerStory,
+		StackReason: stackRefusal(layout),
+	}
+}
+
+// stackRefusal says why a PRD has no stack to publish, and is empty when it has
+// one. A layout that put every story on one branch produced a single sequence of
+// commits: there is no branch per story to base a pull request on, and inventing
+// one after the fact would mean rewriting the history the user has already read.
+func stackRefusal(layout BranchLayout) string {
+	if layout == LayoutBranchPerStory {
+		return ""
+	}
+	return "this run put every story on one branch, so there is no stack to publish"
 }
 
 // PublishPullRequest pushes the branch holding a PRD's commits and opens one
@@ -295,16 +320,17 @@ func (s *Session) submitPullRequest(ctx context.Context, plan pullRequestPlan, d
 	driver := ghstack.Manual{}
 	report := PublishReport{PRD: plan.prd, Branch: plan.branch, Base: plan.base, Stories: plan.stories}
 
-	s.publishStep(plan, "push", fmt.Sprintf("pushing %s to origin", plan.branch))
+	target := plan.target()
+	s.publishStep(target, "push", fmt.Sprintf("pushing %s to origin", plan.branch))
 	// Asked before anything is created, so a second press is reported as the
 	// update it is rather than looking like a fresh pull request.
 	existing, found, _ := driver.Find(ctx, plan.root, plan.branch)
 	report.Updated = found && existing.State == "OPEN"
 
-	s.publishStep(plan, "pr-create", publishingNote(report.Updated, plan.base))
+	s.publishStep(target, "pr-create", publishingNote(report.Updated, plan.base))
 	pr, err := driver.Submit(ctx, plan.spec(draft))
 	if err != nil {
-		s.publishFailure(plan, err)
+		s.publishFailure(target, err)
 		return report, err
 	}
 
@@ -312,8 +338,21 @@ func (s *Session) submitPullRequest(ctx context.Context, plan pullRequestPlan, d
 	report.PR = &ref
 	// Recorded before the event, so the link survives the process that opened it.
 	_ = s.recordPullRequest(plan.prd, plan.branch, ref)
-	s.publishSuccess(plan, ref, report.Updated)
+	s.publishSuccess(target, ref, report.Updated)
 	return report, nil
+}
+
+// publishTarget is what a publishing event is about: one branch of one PRD, and
+// the story it belongs to where publishing works story by story.
+type publishTarget struct {
+	prd     string
+	storyID string
+	branch  string
+	base    string
+}
+
+func (p pullRequestPlan) target() publishTarget {
+	return publishTarget{prd: p.prd, branch: p.branch, base: p.base}
 }
 
 func (p pullRequestPlan) spec(draft bool) ghstack.Spec {
@@ -333,39 +372,39 @@ func publishingNote(updated bool, base string) string {
 // publishStep reports progress while publishing runs. Publishing takes the better
 // part of a minute against a real remote, and a control that goes quiet for that
 // long reads as broken.
-func (s *Session) publishStep(plan pullRequestPlan, op, text string) {
+func (s *Session) publishStep(t publishTarget, op, text string) {
 	s.publish(Event{
-		Kind: EvGit, PRD: plan.prd, Text: text,
-		Git: &GitEvent{Op: op, Branch: plan.branch, BaseBranch: plan.base, State: "running"},
+		Kind: EvGit, PRD: t.prd, StoryID: t.storyID, Text: text,
+		Git: &GitEvent{Op: op, Branch: t.branch, BaseBranch: t.base, State: "running"},
 	})
 }
 
 // publishSuccess reports the pull request with its link, and tells the interface
 // the PRD has changed so the link is picked up everywhere it is shown.
-func (s *Session) publishSuccess(plan pullRequestPlan, ref PRRef, updated bool) {
+func (s *Session) publishSuccess(t publishTarget, ref PRRef, updated bool) {
 	verb := "opened"
 	if updated {
 		verb = "updated"
 	}
 	s.publish(Event{
-		Kind: EvGit, PRD: plan.prd,
-		Text: fmt.Sprintf("%s pull request #%d for %s", verb, ref.Number, plan.branch),
+		Kind: EvGit, PRD: t.prd, StoryID: t.storyID,
+		Text: fmt.Sprintf("%s pull request #%d for %s", verb, ref.Number, t.branch),
 		Git: &GitEvent{
-			Op: "pr-create", Branch: plan.branch, BaseBranch: plan.base,
+			Op: "pr-create", Branch: t.branch, BaseBranch: t.base,
 			PRNumber: ref.Number, PRURL: ref.URL, State: "ok",
 		},
 	})
-	s.publish(Event{Kind: EvPRDChanged, PRD: plan.prd})
+	s.publish(Event{Kind: EvPRDChanged, PRD: t.prd})
 }
 
 // publishFailure reports why publishing stopped. Fatal, unlike a run's git
 // failures: publishing is one action the user took, and it either happened or it
 // did not.
-func (s *Session) publishFailure(plan pullRequestPlan, err error) {
+func (s *Session) publishFailure(t publishTarget, err error) {
 	s.publish(Event{
-		Kind: EvGit, PRD: plan.prd, Text: err.Error(),
+		Kind: EvGit, PRD: t.prd, StoryID: t.storyID, Text: err.Error(),
 		Git: &GitEvent{
-			Op: "pr-create", Branch: plan.branch, BaseBranch: plan.base,
+			Op: "pr-create", Branch: t.branch, BaseBranch: t.base,
 			State: "error", Fatal: true,
 		},
 		Error: errInfo(err, ""),

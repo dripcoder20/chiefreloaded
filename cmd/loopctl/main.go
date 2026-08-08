@@ -54,6 +54,7 @@ Flags:
   -C <dir>          Project directory (default: current directory)
   -json             Emit JSON instead of a table
   -draft            With publish: open the pull request as a draft
+  -stack            With publish: open one pull request per story, bottom-up
 
 Flags may appear on either side of the command:
   loopctl -C ../app list
@@ -71,6 +72,7 @@ func run(args []string) error {
 	dir := fs.String("C", ".", "project directory")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	draft := fs.Bool("draft", false, "open the pull request as a draft")
+	stacked := fs.Bool("stack", false, "open one pull request per story")
 
 	// Go's flag package stops at the first positional, so a single Parse would
 	// silently ignore anything after the command. Parse repeatedly, peeling off
@@ -150,7 +152,9 @@ func run(args []string) error {
 		if len(cmdArgs) < 1 {
 			return fmt.Errorf("publish needs a PRD name")
 		}
-		return publishPRD(ctx, s, publishArgs{prd: cmdArgs[0], draft: *draft, asJSON: *asJSON})
+		return publishPRD(ctx, s, publishArgs{
+			prd: cmdArgs[0], draft: *draft, stacked: *stacked, asJSON: *asJSON,
+		})
 	case "watch":
 		return watch(ctx, s)
 	}
@@ -433,9 +437,10 @@ func printStoryBranches(git session.PRDGitState) error {
 // publishArgs is one invocation of `loopctl publish`, kept as a struct so the
 // command stays within the project's parameter limit.
 type publishArgs struct {
-	prd    string
-	draft  bool
-	asJSON bool
+	prd     string
+	draft   bool
+	stacked bool
+	asJSON  bool
 }
 
 // publishPRD opens one pull request for a PRD's work.
@@ -444,6 +449,9 @@ type publishArgs struct {
 // no commit — are the session's, reported here as a plain error. Nothing in this
 // command re-implements them; that is the point of driving the engine from here.
 func publishPRD(ctx context.Context, s *session.Session, args publishArgs) error {
+	if args.stacked {
+		return publishStack(ctx, s, args)
+	}
 	report, err := s.PublishPullRequest(ctx, session.PublishRequest{PRD: args.prd, Draft: args.draft})
 	if err != nil {
 		return err
@@ -461,6 +469,60 @@ func publishPRD(ctx context.Context, s *session.Session, args publishArgs) error
 	}
 	fmt.Fprintf(w, "action\t%s\n", publishAction(report.Updated))
 	return w.Flush()
+}
+
+// publishStack opens one pull request per story, from the bottom of the stack
+// upwards.
+//
+// The report is printed whether or not publishing succeeded: a stack that fails
+// half way has still created what it created, and the command's job is to say so
+// rather than to leave the user guessing what is on GitHub.
+func publishStack(ctx context.Context, s *session.Session, args publishArgs) error {
+	report, err := s.PublishStack(ctx, session.PublishRequest{PRD: args.prd, Draft: args.draft})
+	if len(report.Stories) == 0 {
+		return err
+	}
+	if args.asJSON {
+		if jsonErr := emitJSON(report); jsonErr != nil {
+			return jsonErr
+		}
+		return err
+	}
+	if printErr := printStackReport(report); printErr != nil {
+		return printErr
+	}
+	return err
+}
+
+func printStackReport(report session.StackReport) error {
+	w := table()
+	for _, story := range report.Stories {
+		fmt.Fprintf(w, "%s\t%s\ton %s\t%s\n",
+			story.StoryID, orNone(story.Branch), orNone(story.Base), storyOutcome(story))
+	}
+	return w.Flush()
+}
+
+// storyOutcome is what happened to one story, in the words that distinguish the
+// four cases: opened, updated, deliberately skipped, and failed.
+func storyOutcome(story session.StoryPublish) string {
+	if story.Error != "" {
+		return "failed: " + story.Error
+	}
+	if story.Skipped != "" {
+		return "skipped: " + story.Skipped
+	}
+	if story.PR == nil {
+		return "no pull request"
+	}
+	return fmt.Sprintf("%s #%d %s", publishVerb(story.Updated), story.PR.Number, story.PR.URL)
+}
+
+func publishVerb(updated bool) string {
+	if updated {
+		return "updated"
+	}
+	return "opened"
 }
 
 func publishAction(updated bool) string {

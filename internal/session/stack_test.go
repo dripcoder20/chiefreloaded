@@ -81,14 +81,8 @@ func TestResolveRemoteBaseFallsBackToTrunk(t *testing.T) {
 	root := t.TempDir()
 	gitInit(t, root)
 
-	st := &stackState{
-		cfg:   config.GitConfig{BaseBranch: "main"},
-		trunk: "main",
-		bases: map[string]string{},
-	}
-
 	// No remote at all, so no branch can be found on it.
-	base, deviated := st.resolveRemoteBase(context.Background(), root, "loop/checkout/us-001-first")
+	base, deviated := resolveRemoteBase(context.Background(), root, "loop/checkout/us-001-first", "main")
 	if !deviated {
 		t.Error("expected a deviation when the base is missing from the remote")
 	}
@@ -101,8 +95,7 @@ func TestResolveRemoteBaseLeavesTrunkAlone(t *testing.T) {
 	root := t.TempDir()
 	gitInit(t, root)
 
-	st := &stackState{cfg: config.GitConfig{BaseBranch: "main"}, trunk: "main"}
-	base, deviated := st.resolveRemoteBase(context.Background(), root, "main")
+	base, deviated := resolveRemoteBase(context.Background(), root, "main", "main")
 	if deviated || base != "main" {
 		t.Errorf("trunk should never be reported as deviated; got %q deviated=%v", base, deviated)
 	}

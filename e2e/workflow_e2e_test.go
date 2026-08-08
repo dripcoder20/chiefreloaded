@@ -330,8 +330,9 @@ func publish(t *testing.T, root string) publishJSON {
 }
 
 // scriptGitHub puts a gh on PATH that behaves like the real one for the calls
-// publishing makes, and records every pull request it is asked to create. A
-// second create for the same branch fails, exactly as GitHub does.
+// publishing makes, and records every pull request it is asked to create. It
+// keeps one per head branch, which is what a stack needs; a second create for the
+// same branch fails, exactly as GitHub does.
 func scriptGitHub(t *testing.T) string {
 	t.Helper()
 
@@ -347,11 +348,12 @@ for arg in "$@"; do
   esac
   prev="$arg"
 done
+slug=$(printf '%s' "$head" | tr '/' '-')
 
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
-  if [ -f "$D/head" ] && { [ -z "$head" ] || [ "$head" = "$(cat $D/head)" ]; }; then
-    printf '[{"number":7,"url":"https://github.com/acme/app/pull/7","state":"OPEN","isDraft":false,"baseRefName":"%s","headRefName":"%s"}]\n' \
-      "$(cat $D/base)" "$(cat $D/head)"
+  if [ -n "$slug" ] && [ -f "$D/head-$slug" ]; then
+    printf '[{"number":%s,"url":"https://github.com/acme/app/pull/%s","state":"OPEN","isDraft":false,"baseRefName":"%s","headRefName":"%s"}]\n' \
+      "$(cat $D/number-$slug)" "$(cat $D/number-$slug)" "$(cat $D/base-$slug)" "$(cat $D/head-$slug)"
   else
     printf '[]\n'
   fi
@@ -359,10 +361,13 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
-  if [ -f "$D/head" ]; then echo "a pull request already exists" >&2; exit 1; fi
+  if [ -f "$D/head-$slug" ]; then echo "a pull request already exists" >&2; exit 1; fi
   cat > /dev/null
-  printf '%s' "$head" > "$D/head"
-  printf '%s' "$base" > "$D/base"
+  number=$(( $(cat "$D/counter" 2>/dev/null || printf '6') + 1 ))
+  printf '%s' "$number" > "$D/counter"
+  printf '%s' "$number" > "$D/number-$slug"
+  printf '%s' "$head" > "$D/head-$slug"
+  printf '%s' "$base" > "$D/base-$slug"
   printf '%s\n' "$*" >> "$D/creations"
   exit 0
 fi
@@ -388,4 +393,75 @@ func creations(t *testing.T, state string) []string {
 		return nil
 	}
 	return strings.Split(strings.TrimSpace(string(raw)), "\n")
+}
+
+// stackJSON is what `loopctl publish -stack -json` emits.
+type stackJSON struct {
+	PRD     string `json:"prd"`
+	Stories []struct {
+		StoryID string `json:"storyId"`
+		Branch  string `json:"branch"`
+		Base    string `json:"base"`
+		Skipped string `json:"skipped"`
+		PR      *struct {
+			Number int    `json:"number"`
+			URL    string `json:"url"`
+		} `json:"pr"`
+	} `json:"stories"`
+}
+
+// A run that gave each story its own branch publishes as a stack: three pull
+// requests, each based on the branch below it, opened by a process that performed
+// none of the run.
+func TestPublishingAPerStoryPRDOpensAStackFromAnotherProcess(t *testing.T) {
+	root := newProject(t)
+	remote := addRemote(t, root)
+	gh := scriptGitHub(t)
+	// Recorded before the run, which is where a run gets its layout from.
+	writeGitRecord(t, root, "main", map[string]any{"layout": "branch-per-story"})
+
+	if out, err := runCtl(t, root, "run", "main"); err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	got := publishStack(t, root)
+	if len(got.Stories) != 3 {
+		t.Fatalf("stories = %+v, want one entry per story", got.Stories)
+	}
+
+	base := "main"
+	for _, story := range got.Stories {
+		if story.PR == nil || story.PR.URL == "" {
+			t.Fatalf("%s = %+v, want a pull request with a link", story.StoryID, story)
+		}
+		if story.Base != base {
+			t.Errorf("%s is based on %q, want the branch below it %q", story.StoryID, story.Base, base)
+		}
+		base = story.Branch
+	}
+	if created := creations(t, gh); len(created) != 3 {
+		t.Errorf("gh pr create ran %d time(s), want one per story: %v", len(created), created)
+	}
+	if refs := remoteBranches(t, remote); len(refs) != 3 {
+		t.Errorf("the remote holds %v, want one branch per story", refs)
+	}
+
+	// A second pass updates what exists rather than opening three more.
+	publishStack(t, root)
+	if created := creations(t, gh); len(created) != 3 {
+		t.Errorf("gh pr create ran %d time(s) over two passes: %v", len(created), created)
+	}
+}
+
+func publishStack(t *testing.T, root string) stackJSON {
+	t.Helper()
+	out, err := runCtl(t, root, "publish", "main", "-stack", "-json")
+	if err != nil {
+		t.Fatalf("loopctl publish -stack: %v\n%s", err, out)
+	}
+	var got stackJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decoding stack output: %v\n%s", err, out)
+	}
+	return got
 }

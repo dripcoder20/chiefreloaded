@@ -141,6 +141,31 @@ let mockWorkflow = {
 // it would really be.
 let mockPublished = false;
 
+/** One story's place in the mocked stack report. */
+function mockStoryPublish(story: {
+  storyId: string;
+  branch: string;
+  base: string;
+  number: number;
+  draft: boolean;
+}) {
+  const { storyId, branch, base, number, draft } = story;
+  return {
+    storyId,
+    branch,
+    base,
+    pr: {
+      number,
+      url: `https://github.com/acme/checkout/pull/${number}`,
+      state: "OPEN",
+      draft,
+      base,
+      head: branch,
+      checkedAt: Date.now(),
+    },
+  };
+}
+
 // ------------------------------------------------------------------- usage --
 //
 // Browser development needs usage that looks like a real project's history, not
@@ -737,8 +762,11 @@ export const mockApi = {
     // is available; publishing itself opens nothing, because there is nowhere to
     // open it. Pressing twice reports the second as an update, which is the
     // behaviour the real one has and the one worth being able to look at.
+    // The stacked item is offered too, so both shapes of the menu can be looked
+    // at in the browser; the mock PRD's layout is the per-story one for that
+    // reason alone.
     publishOffer: async () =>
-      ({ available: true, layout: "one-branch" }) as never,
+      ({ available: true, layout: "branch-per-story", stacked: true }) as never,
     publish: async (req: { prd: string; draft: boolean }) => {
       const updated = mockPublished;
       mockPublished = true;
@@ -758,6 +786,31 @@ export const mockApi = {
           head: "chief/checkout",
           checkedAt: Date.now(),
         },
+      } as never;
+    },
+    // A stack the browser build can look at: two stories with a pull request and
+    // one that committed nothing, which is the case the report exists to show.
+    publishStack: async (req: { prd: string; draft: boolean }) => {
+      emit({ kind: EventKind.EvGit, prd: req.prd, text: "pushing loop/checkout/us-001 to origin" });
+      return {
+        prd: req.prd,
+        stories: [
+          mockStoryPublish({
+            storyId: "US-001",
+            branch: "loop/checkout/us-001",
+            base: "main",
+            number: 128,
+            draft: req.draft,
+          }),
+          { storyId: "US-002", branch: "loop/checkout/us-002", skipped: "the story produced no commit" },
+          mockStoryPublish({
+            storyId: "US-003",
+            branch: "loop/checkout/us-003",
+            base: "loop/checkout/us-001",
+            number: 129,
+            draft: req.draft,
+          }),
+        ],
       } as never;
     },
   },

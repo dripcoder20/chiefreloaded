@@ -15,6 +15,7 @@ import {
   type PRDWorkflow,
   type PublishOffer,
   type PublishReport,
+  type StackReport,
   type Settings,
   type LoopEvent,
   type PRDDetail,
@@ -166,6 +167,15 @@ class AppState {
   published = $state<PublishReport | null>(null);
 
   /**
+   * What the last stacked publish produced, per story.
+   *
+   * Held separately from `published`: they describe different things, and a
+   * stack's outcome is a list — including the stories that got no pull request —
+   * which a single report cannot carry.
+   */
+  publishedStack = $state<StackReport | null>(null);
+
+  /**
    * Publishing is offered only where it can work, and never while a run for the
    * PRD is live — the engine refuses that, and offering it anyway would make the
    * control a way to read an error message.
@@ -174,6 +184,15 @@ class AppState {
     if (!this.selectedPrd || this.publishing) return false;
     if (isActive(this.currentRun?.state)) return false;
     return this.publishOffer?.available === true;
+  }
+
+  /**
+   * A stack is offered only where the run produced one. The engine decides that
+   * from the recorded layout; where it says no, the reason is shown rather than
+   * the item, so the absence is explained instead of noticed.
+   */
+  get canPublishStack(): boolean {
+    return this.canPublish && this.publishOffer?.stacked === true;
   }
 
   /**
@@ -696,6 +715,7 @@ export async function selectPrd(name: string): Promise<void> {
   // control for a PRD that may have nothing to publish at all.
   app.publishOffer = null;
   app.published = null;
+  app.publishedStack = null;
   try {
     app.detail = await api.prd.get(name);
     const first = app.detail.stories?.find((s) => s.status !== "done");
@@ -772,6 +792,31 @@ export async function publishPullRequest(draft: boolean): Promise<void> {
     app.error = errorMessage(err);
   } finally {
     app.publishing = false;
+  }
+}
+
+/**
+ * Open one pull request per story, from the bottom of the stack upwards.
+ *
+ * A stack that stops half way still created what it created. The report does not
+ * survive a rejected call, so the PRD is reloaded either way: each pull request
+ * was recorded against its branch as it was opened, which is what puts the links
+ * back on the story rows.
+ */
+export async function publishStack(draft: boolean): Promise<void> {
+  const prd = app.selectedPrd;
+  if (!prd || app.publishing) return;
+
+  app.publishing = true;
+  app.error = null;
+  app.publishedStack = null;
+  try {
+    app.publishedStack = await api.prd.publishStack({ prd, draft } as never);
+  } catch (err) {
+    app.error = errorMessage(err);
+  } finally {
+    app.publishing = false;
+    await reloadPrds();
   }
 }
 

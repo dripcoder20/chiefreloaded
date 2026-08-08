@@ -417,14 +417,15 @@ func (st *stackState) baseFor(storyID string) string {
 
 func (st *stackState) setBase(storyID, base string) { st.bases[storyID] = base }
 
-// resolveRemoteBase walks down the stack to the nearest base that exists on the
-// remote, so one failed push does not cascade into every later pull request.
+// resolveRemoteBase falls back to the trunk when a base is not on the remote, so
+// one failed push does not cascade into every later pull request.
 //
 // Nothing during a run needs this — a run reaches no remote at all. It is the
-// stack's own rule about what a published base may be, and publishing applies it.
-func (st *stackState) resolveRemoteBase(ctx context.Context, dir, base string) (string, bool) {
-	if base == st.trunk || ghstack.RemoteBranchExists(ctx, dir, base) {
+// stack's own rule about what a published base may be, and publishing applies it
+// to every layer it opens.
+func resolveRemoteBase(ctx context.Context, dir, base, trunk string) (string, bool) {
+	if base == trunk || ghstack.RemoteBranchExists(ctx, dir, base) {
 		return base, false
 	}
-	return st.trunk, true
+	return trunk, true
 }

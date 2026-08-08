@@ -185,6 +185,13 @@ func (p *PRDService) Publish(req session.PublishRequest) (session.PublishReport,
 	return p.s.PublishPullRequest(context.Background(), req)
 }
 
+// PublishStack pushes each story branch from the bottom of the stack upwards and
+// opens a pull request for each. Reports per story, because a stack can partly
+// fail in a way one verdict cannot express.
+func (p *PRDService) PublishStack(req session.PublishRequest) (session.StackReport, error) {
+	return p.s.PublishStack(context.Background(), req)
+}
+
 // AgentDefaults reports the resolved per-phase agent defaults.
 func (p *ProjectService) AgentDefaults() session.AgentDefaults {
 	return session.AgentDefaults{

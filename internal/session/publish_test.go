@@ -109,8 +109,8 @@ func TestPublishingASingleBranchPRDOpensOnePullRequest(t *testing.T) {
 	if !contains(remoteRefs(t, p.remote), report.Branch) {
 		t.Errorf("the remote holds %v, not %q", remoteRefs(t, p.remote), report.Branch)
 	}
-	assertStoriesDescribed(t, p.gh.body(), []string{"US-001", "US-002", "US-003"})
-	if title := p.gh.title(); !strings.Contains(title, "Demo Project") {
+	assertStoriesDescribed(t, p.gh.bodyFor(report.Branch), []string{"US-001", "US-002", "US-003"})
+	if title := p.gh.titleFor(report.Branch); !strings.Contains(title, "Demo Project") {
 		t.Errorf("title = %q, want it to name the PRD", title)
 	}
 }
@@ -158,7 +158,7 @@ func TestPublishingReportsItsProgressAndTheResultingLink(t *testing.T) {
 		t.Errorf("event reported #%d %s, want #%d %s",
 			opened.PRNumber, opened.PRURL, report.PR.Number, report.PR.URL)
 	}
-	if !p.gh.draft() {
+	if !p.gh.draftFor(report.Branch) {
 		t.Error("Create draft pull request opened a pull request that is not a draft")
 	}
 }
@@ -192,7 +192,7 @@ func TestPublishingAPerStoryPRDOpensOnePullRequestForTheTopOfTheStack(t *testing
 	if got := p.gh.creations(); len(got) != 1 {
 		t.Errorf("gh pr create ran %d time(s), want exactly one: %v", len(got), got)
 	}
-	assertStoriesDescribed(t, p.gh.body(), []string{"US-001", "US-002", "US-003"})
+	assertStoriesDescribed(t, p.gh.bodyFor(report.Branch), []string{"US-001", "US-002", "US-003"})
 }
 
 // A story that committed nothing has a branch at the same commit as the one below
@@ -401,9 +401,10 @@ func TestAStackWithNothingCommittedNamesNoBranch(t *testing.T) {
 // scriptedGH is a gh on PATH that behaves like the real one for the calls
 // publishing makes, and records every invocation.
 //
-// It keeps one pull request, which is all a single-pull-request publish creates.
-// A second `gh pr create` for the same branch fails, exactly as GitHub does — so
-// a duplicate would show up as a failure rather than passing quietly.
+// It keeps one pull request per head branch, which is what a stack needs and what
+// GitHub does. A second `gh pr create` for the same branch fails, exactly as
+// GitHub does — so a duplicate would show up as a failure rather than passing
+// quietly.
 type scriptedGH struct {
 	dir string
 	log string
@@ -427,6 +428,10 @@ func scriptGH(t *testing.T) *scriptedGH {
 // ghScript answers the four calls publishing makes: listing a branch's pull
 // request, creating one, patching its title and body, and nothing else — an
 // unexpected invocation fails loudly rather than being absorbed.
+//
+// State is kept per head branch, keyed by the branch name with its slashes
+// replaced, because a stack has one pull request per branch and they must not be
+// able to see each other's numbers, bases or bodies.
 const ghScript = `#!/bin/sh
 printf '%s\n' "$*" >> @LOG@
 D=@STATE@
@@ -442,11 +447,11 @@ for arg in "$@"; do
   esac
   prev="$arg"
 done
+slug=$(printf '%s' "$head" | tr '/' '-')
 
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
-  if [ -f "$D/head" ] && { [ -z "$head" ] || [ "$head" = "$(cat $D/head)" ]; }; then
-    printf '[{"number":%s,"url":"%s","state":"OPEN","isDraft":%s,"baseRefName":"%s","headRefName":"%s"}]\n' \
-      "$(cat $D/number)" "$(cat $D/url)" "$(cat $D/draft)" "$(cat $D/base)" "$(cat $D/head)"
+  if [ -n "$slug" ] && [ -f "$D/pr-$slug" ]; then
+    cat "$D/pr-$slug"
   else
     printf '[]\n'
   fi
@@ -454,21 +459,24 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
-  if [ -f "$D/head" ]; then
+  if [ -f "$D/pr-$slug" ]; then
     echo "a pull request for $head already exists" >&2
     exit 1
   fi
-  cat > "$D/body"
-  printf '%s' "$title" > "$D/title"
-  printf '7' > "$D/number"
-  printf 'https://github.com/acme/app/pull/7' > "$D/url"
-  printf '%s' "$head" > "$D/head"
-  printf '%s' "$base" > "$D/base"
+  number=$(( $(cat "$D/counter" 2>/dev/null || printf '6') + 1 ))
+  printf '%s' "$number" > "$D/counter"
   case " $* " in
-    *" --draft "*) printf 'true' > "$D/draft" ;;
-    *) printf 'false' > "$D/draft" ;;
+    *" --draft "*) draft=true ;;
+    *) draft=false ;;
   esac
+  cat > "$D/body-$slug"
+  printf '%s' "$title" > "$D/title-$slug"
+  printf '%s' "$base" > "$D/base-$slug"
+  printf '%s' "$draft" > "$D/draft-$slug"
+  printf '[{"number":%s,"url":"https://github.com/acme/app/pull/%s","state":"OPEN","isDraft":%s,"baseRefName":"%s","headRefName":"%s"}]\n' \
+    "$number" "$number" "$draft" "$base" "$head" > "$D/pr-$slug"
   printf '%s\n' "$*" >> "$D/creations"
+  printf '%s\n' "$slug" >> "$D/order"
   exit 0
 fi
 
@@ -483,6 +491,29 @@ exit 1
 
 func (g *scriptedGH) calls() []string { return nonEmptyLines(readOrEmpty(g.log)) }
 
+// slug is how the script keys a branch's state.
+func slug(branch string) string { return strings.ReplaceAll(branch, "/", "-") }
+
+// bodyFor, baseFor and titleFor read what one branch's pull request was created
+// with, which is the only way to check a stack layer by layer.
+func (g *scriptedGH) bodyFor(branch string) string {
+	return readOrEmpty(filepath.Join(g.dir, "body-"+slug(branch)))
+}
+
+func (g *scriptedGH) baseFor(branch string) string {
+	return readOrEmpty(filepath.Join(g.dir, "base-"+slug(branch)))
+}
+
+func (g *scriptedGH) titleFor(branch string) string {
+	return readOrEmpty(filepath.Join(g.dir, "title-"+slug(branch)))
+}
+
+// createdOrder is the branches pull requests were created for, in the order they
+// were created. A stack is an order, so it is asserted as one.
+func (g *scriptedGH) createdOrder() []string {
+	return nonEmptyLines(readOrEmpty(filepath.Join(g.dir, "order")))
+}
+
 // creations is every `gh pr create`. Its length is the duplicate check.
 func (g *scriptedGH) creations() []string {
 	return nonEmptyLines(readOrEmpty(filepath.Join(g.dir, "creations")))
@@ -492,13 +523,10 @@ func (g *scriptedGH) creations() []string {
 // what updating an existing one amounts to.
 func (g *scriptedGH) edited() bool { return readOrEmpty(filepath.Join(g.dir, "patch")) != "" }
 
-// body is the description the pull request was created with, which arrived over
-// stdin rather than argv.
-func (g *scriptedGH) body() string { return readOrEmpty(filepath.Join(g.dir, "body")) }
-
-func (g *scriptedGH) title() string { return readOrEmpty(filepath.Join(g.dir, "title")) }
-
-func (g *scriptedGH) draft() bool { return readOrEmpty(filepath.Join(g.dir, "draft")) == "true" }
+// draftFor reports whether a branch's pull request was opened as a draft.
+func (g *scriptedGH) draftFor(branch string) bool {
+	return readOrEmpty(filepath.Join(g.dir, "draft-"+slug(branch))) == "true"
+}
 
 func readOrEmpty(path string) string {
 	raw, err := os.ReadFile(path)

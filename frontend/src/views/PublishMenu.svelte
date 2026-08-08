@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { app, publishPullRequest } from "../stores/app.svelte";
+  import { app, publishPullRequest, publishStack } from "../stores/app.svelte";
   import PrLink from "./PrLink.svelte";
 
   /**
@@ -15,6 +15,12 @@
    * Draft or not is a menu item rather than a checkbox beside a button: it is a
    * statement about whether this work is ready for review, which is the decision
    * being made, not a modifier on a different one.
+   *
+   * One pull request per story is offered only where the run produced a branch
+   * per story. Where it did not, the item is replaced by the reason — the whole
+   * control is present and one of its items is missing, which is worth a sentence
+   * rather than leaving the user to work out why the menu is shorter than
+   * someone else's.
    */
 
   let open = $state(false);
@@ -38,6 +44,12 @@
     close();
     buttonEl?.focus();
     await publishPullRequest(draft);
+  }
+
+  async function chooseStack(draft: boolean): Promise<void> {
+    close();
+    buttonEl?.focus();
+    await publishStack(draft);
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -90,6 +102,16 @@
       >
         <button role="menuitem" onclick={() => choose(false)}>Create pull request</button>
         <button role="menuitem" onclick={() => choose(true)}>Create draft pull request</button>
+        {#if app.canPublishStack}
+          <button role="menuitem" onclick={() => chooseStack(false)}>
+            Create stacked pull requests
+          </button>
+          <button role="menuitem" onclick={() => chooseStack(true)}>
+            Create draft stacked pull requests
+          </button>
+        {:else if app.publishOffer?.stackReason}
+          <p class="reason">{app.publishOffer.stackReason}</p>
+        {/if}
       </div>
     {/if}
   </span>
@@ -99,6 +121,23 @@
      reachable without waiting for a GitHub refresh to confirm it. -->
 {#if app.published?.pr}
   <PrLink pr={app.published.pr} now={app.now} />
+{/if}
+
+<!-- A stack's result is a list: every story that got a pull request, shown with
+     its link, and the ones that did not with the reason. -->
+{#if app.publishedStack?.stories?.length}
+  <ul class="stack">
+    {#each app.publishedStack.stories as story (story.storyId)}
+      <li>
+        <span class="story">{story.storyId}</span>
+        {#if story.pr}
+          <PrLink pr={story.pr} now={app.now} />
+        {:else}
+          <span class="reason">{story.error || story.skipped}</span>
+        {/if}
+      </li>
+    {/each}
+  </ul>
 {/if}
 
 <style>
@@ -153,5 +192,32 @@
   .menu button:focus-visible {
     background: var(--bg);
     color: var(--fg-1);
+  }
+
+  .reason {
+    margin: 0;
+    padding: 5px 8px;
+    color: var(--fg-3);
+    font-size: 0.9em;
+  }
+
+  /* The per-story results sit beside the control rather than inside the menu:
+     the menu is dismissed the moment an item is chosen, and the outcome has to
+     outlive it. */
+  .stack {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .stack li {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .stack .story {
+    color: var(--fg-3);
   }
 </style>

@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const backend = vi.hoisted(() => ({
   publishOffer: vi.fn(),
   publish: vi.fn(),
+  publishStack: vi.fn(),
   list: vi.fn(),
   get: vi.fn(),
 }));
@@ -24,6 +25,7 @@ vi.mock("../platform", async () => {
       prd: {
         publishOffer: (...a: unknown[]) => backend.publishOffer(...a),
         publish: (...a: unknown[]) => backend.publish(...a),
+        publishStack: (...a: unknown[]) => backend.publishStack(...a),
         list: (...a: unknown[]) => backend.list(...a),
         get: (...a: unknown[]) => backend.get(...a),
       },
@@ -31,7 +33,7 @@ vi.mock("../platform", async () => {
   };
 });
 
-import { app, publishPullRequest, reloadPublishOffer } from "./app.svelte";
+import { app, publishPullRequest, publishStack, reloadPublishOffer } from "./app.svelte";
 
 const REPORT = {
   prd: "checkout",
@@ -42,6 +44,19 @@ const REPORT = {
   pr: { number: 128, url: "https://github.com/acme/checkout/pull/128", state: "OPEN" },
 };
 
+const STACK_REPORT = {
+  prd: "checkout",
+  stories: [
+    {
+      storyId: "US-001",
+      branch: "loop/checkout/us-001",
+      base: "main",
+      pr: { number: 128, url: "https://github.com/acme/checkout/pull/128", state: "OPEN" },
+    },
+    { storyId: "US-002", branch: "loop/checkout/us-002", skipped: "the story produced no commit" },
+  ],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   app.error = null;
@@ -49,10 +64,12 @@ beforeEach(() => {
   app.runs = [];
   app.publishing = false;
   app.published = null;
+  app.publishedStack = null;
   app.publishOffer = null;
   backend.list.mockResolvedValue([]);
   backend.get.mockResolvedValue({ name: "checkout", stories: [] });
   backend.publish.mockResolvedValue(REPORT);
+  backend.publishStack.mockResolvedValue(STACK_REPORT);
 });
 
 describe("whether the control appears", () => {
@@ -125,6 +142,59 @@ describe("publishing", () => {
     await publishPullRequest(false);
 
     expect(app.error).toContain("Stop or finish the run before publishing");
+    expect(app.publishing).toBe(false);
+  });
+});
+
+describe("publishing a stack", () => {
+  // US-005 — the stacked item exists only where the run produced a stack, and
+  // the engine's recorded layout is what decides that.
+  it("is offered for a PRD whose run gave each story its own branch", async () => {
+    backend.publishOffer.mockResolvedValue({
+      available: true,
+      layout: "branch-per-story",
+      stacked: true,
+    });
+    await reloadPublishOffer("checkout");
+    expect(app.canPublishStack).toBe(true);
+  });
+
+  it("is absent under a single-branch layout, with the reason kept", async () => {
+    backend.publishOffer.mockResolvedValue({
+      available: true,
+      layout: "one-branch",
+      stacked: false,
+      stackReason: "this run put every story on one branch, so there is no stack to publish",
+    });
+    await reloadPublishOffer("checkout");
+
+    expect(app.canPublish).toBe(true);
+    expect(app.canPublishStack).toBe(false);
+    expect(app.publishOffer?.stackReason).toContain("one branch");
+  });
+
+  it("keeps every story's outcome, including the ones with no pull request", async () => {
+    await publishStack(false);
+
+    expect(backend.publishStack).toHaveBeenCalledWith({ prd: "checkout", draft: false });
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(app.publishedStack?.stories?.[1]?.skipped).toContain("no commit");
+    expect(app.publishing).toBe(false);
+  });
+
+  it("asks for drafts when the draft item is chosen", async () => {
+    await publishStack(true);
+    expect(backend.publishStack).toHaveBeenCalledWith({ prd: "checkout", draft: true });
+  });
+
+  it("reports a refusal rather than pretending a stack was published", async () => {
+    backend.publishStack.mockRejectedValue(
+      new Error("this run put every story on one branch, so there is no stack to publish"),
+    );
+    await publishStack(false);
+
+    expect(app.error).toContain("no stack to publish");
+    expect(app.publishedStack).toBeNull();
     expect(app.publishing).toBe(false);
   });
 });
