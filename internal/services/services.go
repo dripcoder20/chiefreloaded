@@ -172,27 +172,12 @@ func (p *PRDService) RefreshPullRequests(name string) (session.PullRequestSet, e
 	return p.s.RefreshPullRequests(context.Background(), name)
 }
 
-// Issues returns the external issues already created for a PRD's stories.
-func (p *PRDService) Issues(name string) (map[string]session.IssueRef, error) {
-	return p.s.PublishedIssues(name)
-}
-
-// Publish creates one external issue per user story and records the reference.
-func (p *PRDService) Publish(name string) (session.PublishReport, error) {
-	return p.s.PublishIssues(context.Background(), name)
-}
-
 // AgentDefaults reports the resolved per-phase agent defaults.
 func (p *ProjectService) AgentDefaults() session.AgentDefaults {
 	return session.AgentDefaults{
 		Authoring:      p.s.DefaultAuthoringAgent(),
 		Implementation: p.s.DefaultImplementationAgent(),
 	}
-}
-
-// IssueDestinations reports which trackers this project can publish to.
-func (p *ProjectService) IssueDestinations() []session.DestinationStatus {
-	return p.s.IssueDestinations(context.Background())
 }
 
 // RunService starts and controls runs.

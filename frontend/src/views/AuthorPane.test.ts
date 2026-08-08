@@ -55,7 +55,6 @@ vi.mock("@xterm/addon-fit", () => ({
 vi.mock("../platform", () => ({
   openURL: vi.fn(),
   api: {
-    prd: { workflow: vi.fn().mockResolvedValue({ issueDestination: "" }) },
     author: {
       start: bridge.start,
       write: bridge.write,
@@ -89,21 +88,10 @@ const store = vi.hoisted(() => ({
       ],
     },
     agentDefaults: { authoring: "claude", implementation: "codex" },
-    destinations: [
-      { destination: "github", name: "GitHub Issues", available: true },
-      {
-        destination: "linear",
-        name: "Linear",
-        available: false,
-        reason: "set LINEAR_API_KEY to a Linear personal API key",
-      },
-    ],
-    publishing: null as unknown,
   },
   refresh: vi.fn(),
   selectPrd: vi.fn(),
   savePrdWorkflow: vi.fn(),
-  publishIssues: vi.fn(),
 }));
 
 vi.mock("../stores/app.svelte", () => store);
@@ -140,9 +128,7 @@ async function endSession(outcome: Record<string, unknown>, prd = "checkout") {
 beforeEach(() => {
   store.app.selectedPrd = null;
   store.app.authorTarget = null;
-  store.app.publishing = null;
   store.savePrdWorkflow.mockReset().mockResolvedValue(true);
-  store.publishIssues.mockReset().mockResolvedValue(null);
   bridge.start.mockReset();
   bridge.stop.mockReset();
   bridge.write.mockReset();

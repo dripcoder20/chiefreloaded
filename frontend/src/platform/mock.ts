@@ -136,7 +136,6 @@ let run: RunSnapshot = {
 let mockWorkflow = {
   implementationAgent: "codex",
   stackPerStory: false,
-  issueDestination: "",
 };
 
 // ------------------------------------------------------------------- usage --
@@ -699,18 +698,6 @@ export const mockApi = {
     openOnGitHub: async (): Promise<void> => {},
     agentDefaults: async () =>
       ({ authoring: "claude", implementation: "codex" }) as never,
-    // One configured destination and one that is not, so browser dev shows both
-    // an enabled option and a disabled one explaining its setup.
-    issueDestinations: async () =>
-      [
-        {
-          destination: "linear",
-          name: "Linear",
-          available: false,
-          reason: "set LINEAR_API_KEY to a Linear personal API key",
-        },
-        { destination: "github", name: "GitHub Issues", available: true },
-      ] as never,
   },
   prd: {
     list: async (): Promise<PRDSummary[]> => [summary, docs],
@@ -738,29 +725,11 @@ export const mockApi = {
     saveWorkflow: async (_name: string, w: unknown): Promise<void> => {
       mockWorkflow = w as typeof mockWorkflow;
     },
-    issues: async () => ({}) as never,
     // The browser build has no gh and no repository, so the cached shape is the
     // honest answer: branches with no confirmed pull request behind them.
     pullRequests: async () => ({ byBranch: {} }) as never,
     refreshPullRequests: async () =>
       ({ byBranch: {}, unavailable: "no GitHub repository in the browser build" }) as never,
-    publish: async (name: string) =>
-      ({
-        prd: name,
-        results: [
-          {
-            storyId: "US-001",
-            ref: {
-              destination: "github",
-              identifier: "#41",
-              url: "https://github.com/acme/checkout/issues/41",
-            },
-            skipped: false,
-          },
-          { storyId: "US-002", error: "rate limited", skipped: false },
-        ],
-        failed: ["US-002"],
-      }) as never,
   },
   run: {
     start: async (): Promise<string> => {

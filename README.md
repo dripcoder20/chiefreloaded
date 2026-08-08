@@ -49,8 +49,8 @@ Run `task --list` for everything else.
 ## Documentation
 
 - [docs/workflows.md](docs/workflows.md) — authoring sessions, the PRD sidebar
-  and its actions, repository launchers, per-phase agents, stacked pull
-  requests, and publishing user stories as Linear or GitHub issues.
+  and its actions, repository launchers, per-phase agents, and stacked pull
+  requests.
 - [docs/usage.md](docs/usage.md) — what the token and cost figures mean, and
   which fields each agent CLI actually reports.
 - [docs/parity.md](docs/parity.md) — feature checklist against the chief TUI.

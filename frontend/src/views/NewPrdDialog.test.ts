@@ -17,15 +17,6 @@ const store = vi.hoisted(() => ({
       ],
     },
     agentDefaults: { authoring: "claude", implementation: "codex" },
-    destinations: [
-      { destination: "github", name: "GitHub Issues", available: true },
-      {
-        destination: "linear",
-        name: "Linear",
-        available: false,
-        reason: "set LINEAR_API_KEY to a Linear personal API key",
-      },
-    ],
   },
   createPrd: vi.fn(),
 }));
@@ -62,7 +53,6 @@ describe("the New PRD dialog", () => {
       target: { value: "Let people nominate a second email." },
     });
     await fireEvent.click(view.getByLabelText("Stack a pull request per user story"));
-    await fireEvent.change(labelled("Publish issues to"), { target: { value: "github" } });
     await fireEvent.click(view.getByRole("button", { name: "Create PRD" }));
 
     await waitFor(() => expect(store.createPrd).toHaveBeenCalledTimes(1));
@@ -72,7 +62,6 @@ describe("the New PRD dialog", () => {
       workflow: {
         implementationAgent: "codex",
         stackPerStory: true,
-        issueDestination: "github",
       },
     });
   });
@@ -121,15 +110,6 @@ describe("the New PRD dialog", () => {
     await fireEvent.keyDown(document.querySelector("[role='dialog']")!, { key: "Escape" });
 
     expect(onclose).toHaveBeenCalled();
-  });
-
-  it("disables an unconfigured tracker and explains the setup", async () => {
-    render(NewPrdDialog, { props: { onclose: () => {} } });
-    const options = [...labelled("Publish issues to").options];
-
-    expect(options.find((o) => o.value === "linear")!.disabled).toBe(true);
-    expect(options.find((o) => o.value === "github")!.disabled).toBe(false);
-    expect(document.body.textContent).toContain("LINEAR_API_KEY");
   });
 
   it("lists only installed agents", async () => {

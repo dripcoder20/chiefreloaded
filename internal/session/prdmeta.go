@@ -25,15 +25,6 @@ const prdMetaFile = "loop.json"
 // Loop is refused rather than silently misread.
 const prdMetaVersion = 1
 
-// IssueDestination is where a PRD's generated user stories are published.
-type IssueDestination string
-
-const (
-	IssueNone   IssueDestination = ""
-	IssueLinear IssueDestination = "linear"
-	IssueGitHub IssueDestination = "github"
-)
-
 // PRDWorkflow is the per-PRD workflow configuration.
 type PRDWorkflow struct {
 	// ImplementationAgent is the agent CLI chosen to execute the stories. Empty
@@ -44,18 +35,12 @@ type PRDWorkflow struct {
 	// saved preference says otherwise; it only configures the later run and
 	// creates no branches or pull requests by itself.
 	StackPerStory bool `json:"stackPerStory,omitempty"`
-	// IssueDestination is the tracker stories are published to, if any.
-	IssueDestination IssueDestination `json:"issueDestination,omitempty"`
 }
 
 // prdMetaEnvelope is the on-disk shape, versioned so the schema can move.
 type prdMetaEnvelope struct {
 	Version  int         `json:"version"`
 	Workflow PRDWorkflow `json:"workflow"`
-	// Issues records what has already been published, keyed by story ID. It is
-	// the idempotency key: a retry after a partial failure consults this rather
-	// than creating a second issue for a story that already has one.
-	Issues map[string]IssueRef `json:"issues,omitempty"`
 	// Git records what runs have actually done with branches and pull requests.
 	Git PRDGitState `json:"git,omitempty"`
 }
@@ -144,14 +129,6 @@ func (s *Session) PRDGitFor(name string) (PRDGitState, error) {
 		return PRDGitState{}, err
 	}
 	return env.Git, nil
-}
-
-// IssueRef is an external issue created for one user story.
-type IssueRef struct {
-	Destination IssueDestination `json:"destination"`
-	// Identifier is the human-readable id, e.g. DEV-123 or #42.
-	Identifier string `json:"identifier"`
-	URL        string `json:"url"`
 }
 
 // prdMetaPath resolves a PRD's sidecar path.
@@ -284,44 +261,6 @@ func (s *Session) SavePRDWorkflow(name string, w PRDWorkflow) error {
 	return nil
 }
 
-// PublishedIssues returns the external issues already created for a PRD's
-// stories, keyed by story ID.
-func (s *Session) PublishedIssues(name string) (map[string]IssueRef, error) {
-	path, err := s.prdMetaPath(name)
-	if err != nil {
-		return nil, err
-	}
-	env, err := loadPRDMeta(path)
-	if err != nil {
-		return nil, err
-	}
-	if env.Issues == nil {
-		return map[string]IssueRef{}, nil
-	}
-	return env.Issues, nil
-}
-
-// recordIssue stores the issue created for one story.
-//
-// Written per story rather than in one batch at the end: if the application
-// stops between creating an issue and finishing the run, what is on disk must
-// already say that issue exists, or a retry creates a duplicate.
-func (s *Session) recordIssue(prd, storyID string, ref IssueRef) error {
-	path, err := s.prdMetaPath(prd)
-	if err != nil {
-		return err
-	}
-	env, err := loadPRDMeta(path)
-	if err != nil {
-		return err
-	}
-	if env.Issues == nil {
-		env.Issues = map[string]IssueRef{}
-	}
-	env.Issues[storyID] = ref
-	return savePRDMeta(path, env)
-}
-
 // ResolveImplementationAgent decides which agent will implement a PRD, and
 // refuses rather than silently substituting when the saved one has gone.
 //
@@ -362,6 +301,13 @@ func (s *Session) DefaultAuthoringAgent() string {
 
 // DefaultImplementationAgent is the configured implementation agent.
 func (s *Session) DefaultImplementationAgent() string { return s.defaultImplementationAgent() }
+
+// AgentDefaults is the resolved per-phase agent configuration, so the New PRD
+// selectors can show the real default rather than an ambiguous blank.
+type AgentDefaults struct {
+	Authoring      string `json:"authoring"`
+	Implementation string `json:"implementation"`
+}
 
 // stacksPerStory reports whether a run for this PRD should give each story its
 // own branch and pull request.

@@ -101,3 +101,24 @@ func stubPRD(name, context string) string {
 	b.WriteString("## User Stories\n")
 	return b.String()
 }
+
+// writeFileAtomic replaces a file's contents via a temp file and a rename, so an
+// interrupted write leaves the original intact rather than a truncated file.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".prd-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
