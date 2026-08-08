@@ -13,6 +13,8 @@ import {
   type Environment,
   type NewPRDRequest,
   type PRDWorkflow,
+  type PublishOffer,
+  type PublishReport,
   type Settings,
   type LoopEvent,
   type PRDDetail,
@@ -146,6 +148,33 @@ class AppState {
 
   /** The PRD a delete confirmation is currently asking about, if any. */
   pendingDelete = $state<string | null>(null);
+
+  /**
+   * Whether the selected PRD may be published, as the Go side decides it.
+   *
+   * Held rather than derived: it depends on git mode and on whether any story
+   * has committed, neither of which the frontend can see. Null means the answer
+   * has not arrived yet, which is also when the control stays absent — an item
+   * that appears and then vanishes is worse than one that arrives late.
+   */
+  publishOffer = $state<PublishOffer | null>(null);
+
+  /** True while a publish is in flight, so one press publishes once. */
+  publishing = $state(false);
+
+  /** What the last publish produced, so the pull request can be shown with a link. */
+  published = $state<PublishReport | null>(null);
+
+  /**
+   * Publishing is offered only where it can work, and never while a run for the
+   * PRD is live — the engine refuses that, and offering it anyway would make the
+   * control a way to read an error message.
+   */
+  get canPublish(): boolean {
+    if (!this.selectedPrd || this.publishing) return false;
+    if (isActive(this.currentRun?.state)) return false;
+    return this.publishOffer?.available === true;
+  }
 
   /**
    * The detected tooling, including which agent CLIs are installed. The agent
@@ -447,6 +476,10 @@ async function reloadPrds(): Promise<void> {
     app.prds = await api.prd.list();
     if (app.selectedPrd) {
       app.detail = await api.prd.get(app.selectedPrd);
+      // The first commit of a PRD is what makes publishing possible, and that
+      // happens mid-run — so the offer is re-asked whenever the PRD changes
+      // rather than only on selection.
+      void reloadPublishOffer(app.selectedPrd);
     }
   } catch {
     // A PRD being rewritten underneath us is normal — the agent edits progress
@@ -659,6 +692,10 @@ export async function reloadLocalApps(): Promise<void> {
 export async function selectPrd(name: string): Promise<void> {
   app.selectedPrd = name;
   app.selectedStory = null;
+  // Cleared rather than left standing: the previous PRD's answer would offer the
+  // control for a PRD that may have nothing to publish at all.
+  app.publishOffer = null;
+  app.published = null;
   try {
     app.detail = await api.prd.get(name);
     const first = app.detail.stories?.find((s) => s.status !== "done");
@@ -667,6 +704,7 @@ export async function selectPrd(name: string): Promise<void> {
     app.error = errorMessage(err);
   }
   void refreshPullRequests(name);
+  void reloadPublishOffer(name);
 }
 
 /**
@@ -692,6 +730,48 @@ export async function refreshPullRequests(name: string): Promise<void> {
     if (app.selectedPrd === name) app.detail = await api.prd.get(name);
   } catch {
     // See above: an unreachable GitHub is not an error worth showing.
+  }
+}
+
+/**
+ * Ask the Go side whether this PRD can be published.
+ *
+ * Not derivable here: it depends on git mode and on whether any story has
+ * committed, and the engine is the only thing that knows either. A failure
+ * leaves no offer, which hides the control — the safe direction, since the
+ * alternative is a button whose press can only produce an error.
+ */
+export async function reloadPublishOffer(name: string): Promise<void> {
+  try {
+    const offer = await api.prd.publishOffer(name);
+    if (app.selectedPrd === name) app.publishOffer = offer;
+  } catch {
+    if (app.selectedPrd === name) app.publishOffer = null;
+  }
+}
+
+/**
+ * Push the PRD's branch and open — or update — its pull request.
+ *
+ * The refusals live in the engine, so a failure here is reported verbatim
+ * rather than second-guessed: "the run is still going" is the reason, and
+ * rewording it would only make it less true.
+ */
+export async function publishPullRequest(draft: boolean): Promise<void> {
+  const prd = app.selectedPrd;
+  if (!prd || app.publishing) return;
+
+  app.publishing = true;
+  app.error = null;
+  try {
+    app.published = await api.prd.publish({ prd, draft } as never);
+    // The pull request is now cached against the branch, so the links the story
+    // list and the header show come back with it.
+    await reloadPrds();
+  } catch (err) {
+    app.error = errorMessage(err);
+  } finally {
+    app.publishing = false;
   }
 }
 

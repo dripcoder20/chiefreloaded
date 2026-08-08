@@ -27,6 +27,13 @@ type storyDone struct {
 // have read the result — so all that is left here is the bookkeeping a later
 // publish reads back off disk.
 func (s *Session) stackAfterStory(r *run, done storyDone) error {
+	// Recorded under either layout, because whether a story committed is what
+	// decides if a later pull request should describe it, and this is the only
+	// moment that is known. Under a single-branch layout no story owns a branch,
+	// but the entry captureStoryBody just created is still there to mark.
+	if done.Check.Verdict == VerdictNoCommit {
+		_ = s.recordNoCommit(r.prdName, done.ID)
+	}
 	if s.layoutFor(r.prdName) != LayoutBranchPerStory {
 		return nil
 	}
@@ -58,9 +65,9 @@ func (s *Session) stackAfterStory(r *run, done storyDone) error {
 // nothing to review and must not become anyone's base: the story above stacks on
 // whatever this one was going to stack on, which is also what git does when its
 // branch is cut from this unchanged checkout.
+//
+// The flag itself is recorded by the caller, under either layout.
 func (s *Session) skipEmptyStory(r *run, storyID string) {
-	_ = s.recordNoCommit(r.prdName, storyID)
-
 	st := s.stackState(r)
 	if nextID, _ := nextIncompleteStory(r.prdPath); nextID != "" {
 		st.setBase(nextID, st.baseFor(storyID))
@@ -363,22 +370,38 @@ func (s *Session) stackState(r *run) *stackState {
 	defer s.mu.Unlock()
 	if r.stack == nil {
 		cfg := s.loopCfgLocked()
-		trunk := cfg.Git.BaseBranch
-		if trunk == "" && s.project != nil {
-			trunk = s.project.DefaultBase
-		}
-		if trunk == "" {
-			trunk = "main"
-		}
 		r.stack = &stackState{
 			driver: ghstack.Select(context.Background(), string(cfg.Git.StackDriver)),
 			cfg:    cfg.Git,
 			prd:    r.prdName,
-			trunk:  trunk,
+			trunk:  s.trunkBranchLocked(),
 			bases:  make(map[string]string),
 		}
 	}
 	return r.stack
+}
+
+// fallbackTrunk is what a repository with no configured base branch and no
+// detected default branch is assumed to target.
+const fallbackTrunk = "main"
+
+// trunkBranch is what the bottom of a PRD's work targets: the configured base
+// branch, then the repository's own default. It is what a pull request opened for
+// a PRD is based on, and what the bottom of a stack was cut from.
+func (s *Session) trunkBranch() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trunkBranchLocked()
+}
+
+func (s *Session) trunkBranchLocked() string {
+	if trunk := s.loopCfgLocked().Git.BaseBranch; trunk != "" {
+		return trunk
+	}
+	if s.project != nil && s.project.DefaultBase != "" {
+		return s.project.DefaultBase
+	}
+	return fallbackTrunk
 }
 
 func (st *stackState) branchFor(storyID, title string) string {

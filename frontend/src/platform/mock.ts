@@ -137,6 +137,10 @@ let mockWorkflow = {
   implementationAgent: "codex",
 };
 
+// Whether the mock PRD has been published, so a second press reports the update
+// it would really be.
+let mockPublished = false;
+
 // ------------------------------------------------------------------- usage --
 //
 // Browser development needs usage that looks like a real project's history, not
@@ -729,6 +733,33 @@ export const mockApi = {
     pullRequests: async () => ({ byBranch: {} }) as never,
     refreshPullRequests: async () =>
       ({ byBranch: {}, unavailable: "no GitHub repository in the browser build" }) as never,
+    // The control is worth having on screen in browser development, so the offer
+    // is available; publishing itself opens nothing, because there is nowhere to
+    // open it. Pressing twice reports the second as an update, which is the
+    // behaviour the real one has and the one worth being able to look at.
+    publishOffer: async () =>
+      ({ available: true, layout: "one-branch" }) as never,
+    publish: async (req: { prd: string; draft: boolean }) => {
+      const updated = mockPublished;
+      mockPublished = true;
+      emit({ kind: EventKind.EvGit, prd: req.prd, text: "pushing chief/checkout to origin" });
+      return {
+        prd: req.prd,
+        branch: "chief/checkout",
+        base: "main",
+        stories: ["US-001", "US-002"],
+        updated,
+        pr: {
+          number: 128,
+          url: "https://github.com/acme/checkout/pull/128",
+          state: "OPEN",
+          draft: req.draft,
+          base: "main",
+          head: "chief/checkout",
+          checkedAt: Date.now(),
+        },
+      } as never;
+    },
   },
   run: {
     start: async (): Promise<string> => {

@@ -172,6 +172,19 @@ func (p *PRDService) RefreshPullRequests(name string) (session.PullRequestSet, e
 	return p.s.RefreshPullRequests(context.Background(), name)
 }
 
+// PublishOffer reports whether a PRD can be published, and why not. The header
+// hides the control when it is unavailable rather than disabling it.
+func (p *PRDService) PublishOffer(name string) session.PublishOffer {
+	return p.s.PublishOfferFor(name)
+}
+
+// Publish pushes the branch holding a PRD's commits and opens or updates one
+// pull request for them. Slow — it shells out to git and gh — and reports its
+// progress on the event stream.
+func (p *PRDService) Publish(req session.PublishRequest) (session.PublishReport, error) {
+	return p.s.PublishPullRequest(context.Background(), req)
+}
+
 // AgentDefaults reports the resolved per-phase agent defaults.
 func (p *ProjectService) AgentDefaults() session.AgentDefaults {
 	return session.AgentDefaults{

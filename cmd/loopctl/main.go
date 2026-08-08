@@ -47,11 +47,13 @@ Commands:
   run <prd>         Run a PRD to completion, streaming progress
   usage             Show the cumulative usage roll-up (project/session/story)
   workflow <prd>    Show a PRD's implementation agent and stacking settings
+  publish <prd>     Push the PRD's branch and open one pull request for its work
   watch             Stream the session event log until interrupted
 
 Flags:
   -C <dir>          Project directory (default: current directory)
   -json             Emit JSON instead of a table
+  -draft            With publish: open the pull request as a draft
 
 Flags may appear on either side of the command:
   loopctl -C ../app list
@@ -68,6 +70,7 @@ func run(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("C", ".", "project directory")
 	asJSON := fs.Bool("json", false, "emit JSON")
+	draft := fs.Bool("draft", false, "open the pull request as a draft")
 
 	// Go's flag package stops at the first positional, so a single Parse would
 	// silently ignore anything after the command. Parse repeatedly, peeling off
@@ -97,7 +100,7 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
-	case "doctor", "list", "show", "run", "usage", "watch", "workflow":
+	case "doctor", "list", "show", "run", "usage", "watch", "workflow", "publish":
 	default:
 		return fmt.Errorf("unknown command %q (try `loopctl help`)", cmd)
 	}
@@ -143,6 +146,11 @@ func run(args []string) error {
 			return fmt.Errorf("workflow needs a PRD name")
 		}
 		return showWorkflow(s, cmdArgs[0], *asJSON)
+	case "publish":
+		if len(cmdArgs) < 1 {
+			return fmt.Errorf("publish needs a PRD name")
+		}
+		return publishPRD(ctx, s, publishArgs{prd: cmdArgs[0], draft: *draft, asJSON: *asJSON})
 	case "watch":
 		return watch(ctx, s)
 	}
@@ -420,6 +428,46 @@ func printStoryBranches(git session.PRDGitState) error {
 		fmt.Fprintf(w, "%s\t%s\ton %s%s\n", b.StoryID, b.Branch, orNone(b.Base), publishNote(b))
 	}
 	return w.Flush()
+}
+
+// publishArgs is one invocation of `loopctl publish`, kept as a struct so the
+// command stays within the project's parameter limit.
+type publishArgs struct {
+	prd    string
+	draft  bool
+	asJSON bool
+}
+
+// publishPRD opens one pull request for a PRD's work.
+//
+// The refusals — a live run, a project that is not a git repository, a PRD with
+// no commit — are the session's, reported here as a plain error. Nothing in this
+// command re-implements them; that is the point of driving the engine from here.
+func publishPRD(ctx context.Context, s *session.Session, args publishArgs) error {
+	report, err := s.PublishPullRequest(ctx, session.PublishRequest{PRD: args.prd, Draft: args.draft})
+	if err != nil {
+		return err
+	}
+	if args.asJSON {
+		return emitJSON(report)
+	}
+
+	w := table()
+	fmt.Fprintf(w, "branch\t%s\n", report.Branch)
+	fmt.Fprintf(w, "base\t%s\n", report.Base)
+	fmt.Fprintf(w, "stories\t%s\n", strings.Join(report.Stories, ", "))
+	if report.PR != nil {
+		fmt.Fprintf(w, "pull request\t#%d %s\n", report.PR.Number, report.PR.URL)
+	}
+	fmt.Fprintf(w, "action\t%s\n", publishAction(report.Updated))
+	return w.Flush()
+}
+
+func publishAction(updated bool) string {
+	if updated {
+		return "updated the existing pull request"
+	}
+	return "opened a pull request"
 }
 
 // publishNote marks the branches that publishing must skip.

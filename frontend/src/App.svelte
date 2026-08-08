@@ -29,6 +29,7 @@
   import PrdSettings from "./views/PrdSettings.svelte";
   import Summary from "./views/Summary.svelte";
   import PrLink from "./views/PrLink.svelte";
+  import PublishMenu from "./views/PublishMenu.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
   import UsageBar from "./views/UsageBar.svelte";
 
@@ -301,6 +302,11 @@
         </button>
         <button onclick={pauseRun} disabled={!app.canPause}>{pauseLabel}</button>
         <button onclick={stopRun} disabled={!app.canStop}>{stopLabel}</button>
+
+        <!-- Publishing sits after the run controls because it is what you do
+             once they are finished with. It is absent until the PRD has
+             something to publish. -->
+        <PublishMenu />
       </div>
 
       <!-- Everything here is about the PRD selected in the sidebar. The

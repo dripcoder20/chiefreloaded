@@ -264,3 +264,128 @@ func TestAMissingSavedAgentIsReportedRatherThanSubstituted(t *testing.T) {
 		t.Errorf("the error should name the missing agent: %s", got.ResolveError)
 	}
 }
+
+// ----------------------------------------------------------- publishing --
+
+// publishJSON is what `loopctl publish -json` emits.
+type publishJSON struct {
+	PRD     string   `json:"prd"`
+	Branch  string   `json:"branch"`
+	Base    string   `json:"base"`
+	Stories []string `json:"stories"`
+	Updated bool     `json:"updated"`
+	PR      *struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+	} `json:"pr"`
+}
+
+// Publishing is a separate process from the run, which is the point: the branch
+// record and the stored descriptions are all it has, and they came off the disk.
+func TestPublishingAFinishedPRDOpensOnePullRequestFromAnotherProcess(t *testing.T) {
+	root := newProject(t)
+	remote := addRemote(t, root)
+	gh := scriptGitHub(t)
+
+	if out, err := runCtl(t, root, "run", "main"); err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	first := publish(t, root)
+	if first.Branch != "chief/main" {
+		t.Errorf("published %q, want the PRD's run branch", first.Branch)
+	}
+	if first.Base != "main" {
+		t.Errorf("base = %q, want the trunk", first.Base)
+	}
+	if first.PR == nil || first.PR.URL == "" {
+		t.Fatalf("report = %+v, want a pull request with a link", first)
+	}
+	if refs := remoteBranches(t, remote); len(refs) != 1 || refs[0] != first.Branch {
+		t.Errorf("the remote holds %v, want only %q", refs, first.Branch)
+	}
+
+	// Pressing the control again updates the pull request rather than opening a
+	// second one — the property a duplicate would make unrecoverable.
+	second := publish(t, root)
+	if !second.Updated {
+		t.Error("the second publish must report an update, not a new pull request")
+	}
+	if got := creations(t, gh); len(got) != 1 {
+		t.Errorf("gh pr create ran %d time(s) over two publishes: %v", len(got), got)
+	}
+}
+
+func publish(t *testing.T, root string) publishJSON {
+	t.Helper()
+	out, err := runCtl(t, root, "publish", "main", "-json")
+	if err != nil {
+		t.Fatalf("loopctl publish: %v\n%s", err, out)
+	}
+	var got publishJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decoding publish output: %v\n%s", err, out)
+	}
+	return got
+}
+
+// scriptGitHub puts a gh on PATH that behaves like the real one for the calls
+// publishing makes, and records every pull request it is asked to create. A
+// second create for the same branch fails, exactly as GitHub does.
+func scriptGitHub(t *testing.T) string {
+	t.Helper()
+
+	bin := t.TempDir()
+	state := t.TempDir()
+	script := strings.ReplaceAll(`#!/bin/sh
+D=@STATE@
+prev=""; head=""; base=""
+for arg in "$@"; do
+  case "$prev" in
+    --head) head="$arg" ;;
+    --base) base="$arg" ;;
+  esac
+  prev="$arg"
+done
+
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$D/head" ] && { [ -z "$head" ] || [ "$head" = "$(cat $D/head)" ]; }; then
+    printf '[{"number":7,"url":"https://github.com/acme/app/pull/7","state":"OPEN","isDraft":false,"baseRefName":"%s","headRefName":"%s"}]\n' \
+      "$(cat $D/base)" "$(cat $D/head)"
+  else
+    printf '[]\n'
+  fi
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  if [ -f "$D/head" ]; then echo "a pull request already exists" >&2; exit 1; fi
+  cat > /dev/null
+  printf '%s' "$head" > "$D/head"
+  printf '%s' "$base" > "$D/base"
+  printf '%s\n' "$*" >> "$D/creations"
+  exit 0
+fi
+
+if [ "$1" = "api" ]; then cat > /dev/null; exit 0; fi
+
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`, "@STATE@", state)
+
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return state
+}
+
+// creations is every `gh pr create` the scripted gh was asked to perform.
+func creations(t *testing.T, state string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(state, "creations"))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimSpace(string(raw)), "\n")
+}

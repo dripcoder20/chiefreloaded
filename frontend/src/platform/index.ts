@@ -24,6 +24,9 @@ import type {
   Environment,
   NewPRDRequest,
   PRDWorkflow,
+  PublishOffer,
+  PublishReport,
+  PublishRequest,
   PullRequestSet,
   PRRef,
   Event as LoopEvent,
@@ -55,6 +58,9 @@ export type {
   Environment,
   NewPRDRequest,
   PRDWorkflow,
+  PublishOffer,
+  PublishReport,
+  PublishRequest,
   PullRequestSet,
   PRRef,
   LoopEvent,
@@ -220,6 +226,8 @@ const wailsApi = {
     pullRequests: (name: string): Promise<PullRequestSet> => PRDService.PullRequests(name),
     refreshPullRequests: (name: string): Promise<PullRequestSet> =>
       PRDService.RefreshPullRequests(name),
+    publishOffer: (name: string): Promise<PublishOffer> => PRDService.PublishOffer(name),
+    publish: (req: PublishRequest): Promise<PublishReport> => PRDService.Publish(req),
   },
   run: {
     start: (req: StartRequest): Promise<string> => RunService.Start(req),
