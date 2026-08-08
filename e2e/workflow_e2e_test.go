@@ -11,6 +11,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,6 +122,60 @@ func TestARunsBranchRecordIsReadableByAnotherProcess(t *testing.T) {
 	if got.Git.Base != "main" {
 		t.Errorf("run branch base = %q, want the branch it was cut from", got.Git.Base)
 	}
+}
+
+// A run's whole effect is local. Given a remote it could really push to, a
+// complete run must still leave it empty and its own branch present.
+func TestAFullRunAgainstARemotePublishesNothing(t *testing.T) {
+	root := newProject(t)
+	remote := addRemote(t, root)
+
+	if out, err := runCtl(t, root, "run", "main"); err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	branch := readWorkflow(t, root, "main").Git.Branch
+	if branch == "" {
+		t.Fatal("the run recorded no branch")
+	}
+	if !localBranchExists(t, root, branch) {
+		t.Errorf("branch %q is not in the repository the run was for", branch)
+	}
+	if refs := remoteBranches(t, remote); len(refs) != 0 {
+		t.Errorf("the remote holds %v; a run must push nothing", refs)
+	}
+}
+
+// addRemote gives root a remote that pushes really do succeed against, so a test
+// asserting nothing was pushed is testing restraint rather than absence.
+func addRemote(t *testing.T, root string) string {
+	t.Helper()
+	remote := t.TempDir()
+	gitIn(t, remote, "init", "-q", "--bare", "-b", "main")
+	gitIn(t, root, "remote", "add", "origin", remote)
+	return remote
+}
+
+func remoteBranches(t *testing.T, remote string) []string {
+	t.Helper()
+	out := gitIn(t, remote, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	return strings.Fields(out)
+}
+
+func localBranchExists(t *testing.T, root, branch string) bool {
+	t.Helper()
+	return strings.Contains(gitIn(t, root, "for-each-ref", "--format=%(refname:short)", "refs/heads"), branch)
+}
+
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
 // A stack the run recorded must come back in the order it was created, with the

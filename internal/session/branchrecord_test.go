@@ -99,6 +99,17 @@ func recordedBranches(t *testing.T, root, prd string) []StoryBranch {
 	return state.StoryBranches()
 }
 
+// sameBranchRecord compares the parts of a record a test states outright. The
+// stored pull-request description is deliberately excluded: it is many lines of
+// rendered markdown, and pinning it here would make every wording change a
+// failure in tests that are about branches.
+func sameBranchRecord(got, want StoryBranch) bool {
+	return got.StoryID == want.StoryID &&
+		got.Branch == want.Branch &&
+		got.Base == want.Base &&
+		got.NoCommit == want.NoCommit
+}
+
 // storyBranch is the branch a story is expected to have been given.
 func storyBranch(storyID, title string) string {
 	return branchName(config.DefaultBranchTemplate, "main", storyID, title)
@@ -144,7 +155,7 @@ func TestARunRecordsEachStoryBranchWithItsBase(t *testing.T) {
 		t.Fatalf("recorded %+v, want one entry per story", got)
 	}
 	for i, w := range want {
-		if got[i] != w {
+		if !sameBranchRecord(got[i], w) {
 			t.Errorf("branch %d = %+v, want %+v", i, got[i], w)
 		}
 	}
@@ -222,7 +233,7 @@ func TestARunStoppedPartWayKeepsTheBranchesItCreated(t *testing.T) {
 		t.Fatalf("recorded %+v, want only the story the run reached", got)
 	}
 	want := StoryBranch{StoryID: "US-001", Branch: storyBranch("US-001", "First story"), Base: "main"}
-	if got[0] != want {
+	if !sameBranchRecord(got[0], want) {
 		t.Errorf("branch = %+v, want %+v", got[0], want)
 	}
 }

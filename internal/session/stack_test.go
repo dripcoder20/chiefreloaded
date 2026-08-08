@@ -85,7 +85,6 @@ func TestResolveRemoteBaseFallsBackToTrunk(t *testing.T) {
 		cfg:   config.GitConfig{BaseBranch: "main"},
 		trunk: "main",
 		bases: map[string]string{},
-		prs:   map[string]PRRef{},
 	}
 
 	// No remote at all, so no branch can be found on it.
@@ -212,8 +211,9 @@ func TestStackIsSkippedWhenModeIsOff(t *testing.T) {
 	}
 
 	r := &run{prdName: "main", prdPath: s.PRDs()[0].Path, workDir: root, sess: s}
-	err := s.stackAfterStory(context.Background(), r, "US-001", "First story",
-		CommitCheck{Verdict: VerdictCommitted})
+	err := s.stackAfterStory(r, storyDone{
+		ID: "US-001", Title: "First story", Check: CommitCheck{Verdict: VerdictCommitted},
+	})
 	if err != nil {
 		t.Errorf("stacking should be a no-op when disabled, got %v", err)
 	}

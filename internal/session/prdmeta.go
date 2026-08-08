@@ -73,14 +73,18 @@ type PRDGitState struct {
 	PullRequests map[string]PRRef `json:"pullRequests,omitempty"`
 }
 
-// StoryBranch is one story's branch as a run created it, together with the
-// branch it was cut from.
+// StoryBranch is what a run recorded about one story: the branch it created for
+// it, the branch that was cut from, and the pull-request description composed
+// when the story was verified.
 //
 // An ordered slice rather than the story-to-branch map it supersedes, because
 // publishing a stack has to walk the branches from the bottom upwards and the
 // creation order is the only record of what "below" means. A JSON object has no
 // order and Go randomises map iteration, so the map could not express a stack at
 // all.
+//
+// Branch is empty for a story under a single-branch layout, where no story owns a
+// branch and the entry exists to hold the description alone.
 type StoryBranch struct {
 	StoryID string `json:"storyId"`
 	Branch  string `json:"branch"`
@@ -92,7 +96,15 @@ type StoryBranch struct {
 	// the attempt rather than with the branch, because whether a story commits is
 	// not knowable when its branch is created.
 	NoCommit bool `json:"noCommit,omitempty"`
+	// PullRequestBody is the description composed for this story at the moment it
+	// was verified, before the status write ticked its acceptance criteria.
+	// Publishing uses it verbatim: recomposing it later would describe the status
+	// write rather than the work.
+	PullRequestBody string `json:"pullRequestBody,omitempty"`
 }
+
+// HasBranch reports whether a branch of this story's own was recorded.
+func (b StoryBranch) HasBranch() bool { return b.Branch != "" }
 
 // BaseIsKnown reports whether this branch says what it was cut from.
 func (b StoryBranch) BaseIsKnown() bool { return b.Base != "" }
@@ -100,7 +112,7 @@ func (b StoryBranch) BaseIsKnown() bool { return b.Base != "" }
 // HasSomethingToPublish reports whether there is a branch here worth a pull
 // request. A story that committed nothing has a branch identical to the one below
 // it, so publishing it would open an empty pull request.
-func (b StoryBranch) HasSomethingToPublish() bool { return b.Branch != "" && !b.NoCommit }
+func (b StoryBranch) HasSomethingToPublish() bool { return b.HasBranch() && !b.NoCommit }
 
 // StoryBranches is every story branch a run recorded, in the order it created
 // them.
@@ -129,9 +141,12 @@ func (g PRDGitState) StoryBranches() []StoryBranch {
 // BasesAreKnown reports whether every recorded branch says what it was cut from.
 // It is false for a sidecar written before bases were recorded, which is the one
 // case where a stack cannot be reconstructed from the record alone.
+//
+// A story with no branch of its own is not a link in any stack, so it is not
+// asked what it was based on.
 func (g PRDGitState) BasesAreKnown() bool {
 	for _, b := range g.StoryBranches() {
-		if !b.BaseIsKnown() {
+		if b.HasBranch() && !b.BaseIsKnown() {
 			return false
 		}
 	}
@@ -187,12 +202,39 @@ func (s *Session) recordStoryBranch(prd string, entry StoryBranch) error {
 // upsertStoryBranch replaces a story's entry in place, or appends it.
 func upsertStoryBranch(branches []StoryBranch, entry StoryBranch) []StoryBranch {
 	for i := range branches {
-		if branches[i].StoryID == entry.StoryID {
-			branches[i] = entry
-			return branches
+		if branches[i].StoryID != entry.StoryID {
+			continue
 		}
+		// The description is carried over rather than overwritten. A resumed run
+		// re-records a story's branch as it walks past it, and it has no
+		// description to offer at that point — it was composed at verification
+		// time and cannot be composed again.
+		if entry.PullRequestBody == "" {
+			entry.PullRequestBody = branches[i].PullRequestBody
+		}
+		branches[i] = entry
+		return branches
 	}
 	return append(branches, entry)
+}
+
+// recordStoryBody stores the pull-request description composed for a story.
+//
+// A story with no branch of its own still gets an entry: under a single-branch
+// layout no story owns a branch, and the description composed at verification
+// time is exactly what a later publish assembles the PRD's own description from.
+func (s *Session) recordStoryBody(prd, storyID, body string) error {
+	return s.updatePRDMeta(prd, func(env *prdMetaEnvelope) {
+		env.Git.Branches = env.Git.StoryBranches()
+		for i := range env.Git.Branches {
+			if env.Git.Branches[i].StoryID == storyID {
+				env.Git.Branches[i].PullRequestBody = body
+				return
+			}
+		}
+		env.Git.Branches = append(env.Git.Branches,
+			StoryBranch{StoryID: storyID, PullRequestBody: body})
+	})
 }
 
 // recordNoCommit marks a story's branch as having produced nothing to publish.

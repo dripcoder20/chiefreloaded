@@ -412,6 +412,11 @@ func printStoryBranches(git session.PRDGitState) error {
 	fmt.Printf("\nbranches (in creation order)\n")
 	w := table()
 	for _, b := range branches {
+		// A story under a single-branch layout has a record but no branch of its
+		// own; listing it here would invent one.
+		if !b.HasBranch() {
+			continue
+		}
 		fmt.Fprintf(w, "%s\t%s\ton %s%s\n", b.StoryID, b.Branch, orNone(b.Base), publishNote(b))
 	}
 	return w.Flush()
