@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import {
     adjustBudget,
-    answerQuestion,
     app,
     cancelDeletePrd,
     connect,
@@ -26,9 +25,11 @@
   import LogPanel from "./views/LogPanel.svelte";
   import SettingsDialog from "./views/SettingsDialog.svelte";
   import NewPrdDialog from "./views/NewPrdDialog.svelte";
+  import QuestionPrompt from "./views/QuestionPrompt.svelte";
   import PrdSettings from "./views/PrdSettings.svelte";
   import Summary from "./views/Summary.svelte";
   import PrLink from "./views/PrLink.svelte";
+  import PublishMenu from "./views/PublishMenu.svelte";
   import AuthorPane from "./views/AuthorPane.svelte";
   import UsageBar from "./views/UsageBar.svelte";
 
@@ -214,26 +215,7 @@
   <div class="runbar" class:active={app.anyRunning} aria-hidden="true"></div>
 
   {#if app.questions.length > 0}
-    {@const q = app.questions[0]}
-    <!-- A question blocks its run, so it belongs above everything else. -->
-    <div class="question" role="alertdialog" aria-label={q.title}>
-      <div>
-        <strong>{q.title}</strong>
-        {#if q.body}<p>{q.body}</p>{/if}
-      </div>
-      <div class="options">
-        {#each q.options as o}
-          <button
-            class:recommended={o.recommended}
-            class:destructive={o.destructive}
-            onclick={() => answerQuestion(q.id, o.id)}
-            title={o.hint}
-          >
-            {o.label}
-          </button>
-        {/each}
-      </div>
-    </div>
+    <QuestionPrompt question={app.questions[0]} />
   {/if}
 
   {#if app.pendingDelete}
@@ -320,6 +302,11 @@
         </button>
         <button onclick={pauseRun} disabled={!app.canPause}>{pauseLabel}</button>
         <button onclick={stopRun} disabled={!app.canStop}>{stopLabel}</button>
+
+        <!-- Publishing sits after the run controls because it is what you do
+             once they are finished with. It is absent until the PRD has
+             something to publish. -->
+        <PublishMenu />
       </div>
 
       <!-- Everything here is about the PRD selected in the sidebar. The
@@ -688,10 +675,6 @@
     display: flex;
     gap: 6px;
     margin-left: auto;
-  }
-  .options .recommended {
-    border-color: var(--accent);
-    color: var(--fg-1);
   }
   .options .destructive {
     border-color: var(--danger);

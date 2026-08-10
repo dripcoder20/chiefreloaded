@@ -45,7 +45,7 @@ func TestRefreshPullRequests_keepsTheCacheWhenGitHubIsUnreachable(t *testing.T) 
 	root := openTestProject(t, s)
 	writePRD(t, root, "checkout", samplePRD)
 
-	if err := s.recordBranch("checkout", "", "chief/checkout"); err != nil {
+	if err := s.recordRunBranch("checkout", "chief/checkout", "main"); err != nil {
 		t.Fatal(err)
 	}
 	cached := PRRef{Number: 7, URL: "https://github.com/o/r/pull/7", State: "OPEN", CheckedAt: 1000}
@@ -76,15 +76,15 @@ func TestRefreshPullRequests_keepsTheCacheWhenGitHubIsUnreachable(t *testing.T) 
 
 // Branch names are recomputable only until the template changes or the user
 // edits the suggested branch, so what a run used is recorded rather than derived.
-func TestRecordBranch_separatesThePRDFromItsStories(t *testing.T) {
+func TestRecordedBranches_separatesThePRDFromItsStories(t *testing.T) {
 	s := newTestSession(t)
 	root := openTestProject(t, s)
 	writePRD(t, root, "checkout", samplePRD)
 
-	if err := s.recordBranch("checkout", "", "chief/checkout"); err != nil {
+	if err := s.recordRunBranch("checkout", "chief/checkout", "main"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.recordBranch("checkout", "US-001", "loop/us-001-cart"); err != nil {
+	if err := s.recordStoryBranch("checkout", StoryBranch{StoryID: "US-001", Branch: "loop/us-001-cart", Base: "chief/checkout"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,23 +95,23 @@ func TestRecordBranch_separatesThePRDFromItsStories(t *testing.T) {
 	if git.Branch != "chief/checkout" {
 		t.Errorf("PRD branch = %q, want chief/checkout", git.Branch)
 	}
-	if git.Stories["US-001"] != "loop/us-001-cart" {
-		t.Errorf("US-001 branch = %q, want loop/us-001-cart", git.Stories["US-001"])
+	if got := git.BranchFor("US-001"); got != "loop/us-001-cart" {
+		t.Errorf("US-001 branch = %q, want loop/us-001-cart", got)
 	}
 }
 
 // Recording git state must not disturb the workflow settings sharing the file:
 // they are written at different times by different parts of the application.
-func TestRecordBranch_leavesTheWorkflowIntact(t *testing.T) {
+func TestRecordedBranches_leavesTheWorkflowIntact(t *testing.T) {
 	s := newTestSession(t)
 	root := openTestProject(t, s)
 	writePRD(t, root, "checkout", samplePRD)
 
-	want := PRDWorkflow{ImplementationAgent: "codex", StackPerStory: true}
+	want := PRDWorkflow{ImplementationAgent: "codex"}
 	if err := s.SavePRDWorkflow("checkout", want); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.recordBranch("checkout", "US-001", "loop/us-001"); err != nil {
+	if err := s.recordStoryBranch("checkout", StoryBranch{StoryID: "US-001", Branch: "loop/us-001", Base: "main"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,7 +143,7 @@ func TestPRD_carriesTheRecordedBranchAndPullRequest(t *testing.T) {
 	}
 	first := detail.Stories[0].ID
 
-	if err := s.recordBranch("checkout", first, "loop/"+first); err != nil {
+	if err := s.recordStoryBranch("checkout", StoryBranch{StoryID: first, Branch: "loop/" + first, Base: "main"}); err != nil {
 		t.Fatal(err)
 	}
 	ref := PRRef{Number: 12, URL: "https://github.com/o/r/pull/12", State: "OPEN", CheckedAt: 42}

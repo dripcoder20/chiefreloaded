@@ -47,11 +47,14 @@ Commands:
   run <prd>         Run a PRD to completion, streaming progress
   usage             Show the cumulative usage roll-up (project/session/story)
   workflow <prd>    Show a PRD's implementation agent and stacking settings
+  publish <prd>     Push the PRD's branch and open one pull request for its work
   watch             Stream the session event log until interrupted
 
 Flags:
   -C <dir>          Project directory (default: current directory)
   -json             Emit JSON instead of a table
+  -draft            With publish: open the pull request as a draft
+  -stack            With publish: open one pull request per story, bottom-up
 
 Flags may appear on either side of the command:
   loopctl -C ../app list
@@ -68,6 +71,8 @@ func run(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("C", ".", "project directory")
 	asJSON := fs.Bool("json", false, "emit JSON")
+	draft := fs.Bool("draft", false, "open the pull request as a draft")
+	stacked := fs.Bool("stack", false, "open one pull request per story")
 
 	// Go's flag package stops at the first positional, so a single Parse would
 	// silently ignore anything after the command. Parse repeatedly, peeling off
@@ -97,7 +102,7 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
-	case "doctor", "list", "show", "run", "usage", "watch", "workflow":
+	case "doctor", "list", "show", "run", "usage", "watch", "workflow", "publish":
 	default:
 		return fmt.Errorf("unknown command %q (try `loopctl help`)", cmd)
 	}
@@ -143,6 +148,13 @@ func run(args []string) error {
 			return fmt.Errorf("workflow needs a PRD name")
 		}
 		return showWorkflow(s, cmdArgs[0], *asJSON)
+	case "publish":
+		if len(cmdArgs) < 1 {
+			return fmt.Errorf("publish needs a PRD name")
+		}
+		return publishPRD(ctx, s, publishArgs{
+			prd: cmdArgs[0], draft: *draft, stacked: *stacked, asJSON: *asJSON,
+		})
 	case "watch":
 		return watch(ctx, s)
 	}
@@ -363,15 +375,25 @@ func showWorkflow(s *session.Session, name string, asJSON bool) error {
 	// installed — and reporting that is the point of showing it here.
 	resolved, resolveErr := s.ResolveImplementationAgent(name)
 
+	// What the runs did with branches, read from the sidecar rather than from a
+	// live run — which is the point: this process performed none of them.
+	git, _ := s.PRDGitFor(name)
+
 	if asJSON {
 		return emitJSON(struct {
-			Workflow      session.PRDWorkflow `json:"workflow"`
-			ResolvedAgent string              `json:"resolvedAgent"`
-			ResolveError  string              `json:"resolveError,omitempty"`
+			Workflow      session.PRDWorkflow   `json:"workflow"`
+			ResolvedAgent string                `json:"resolvedAgent"`
+			ResolveError  string                `json:"resolveError,omitempty"`
+			Git           session.PRDGitState   `json:"git"`
+			Branches      []session.StoryBranch `json:"branches"`
+			BasesKnown    bool                  `json:"basesKnown"`
 		}{
 			Workflow:      workflow,
 			ResolvedAgent: resolved,
 			ResolveError:  errText(resolveErr),
+			Git:           git,
+			Branches:      git.StoryBranches(),
+			BasesKnown:    git.BasesAreKnown(),
 		})
 	}
 
@@ -381,8 +403,150 @@ func showWorkflow(s *session.Session, name string, asJSON bool) error {
 	if resolveErr != nil {
 		fmt.Fprintf(w, "resolve error\t%s\n", resolveErr)
 	}
-	fmt.Fprintf(w, "stack per story\t%v\n", workflow.StackPerStory)
+	fmt.Fprintf(w, "branch layout\t%s\n", recordedLayout(git))
+	fmt.Fprintf(w, "run branch\t%s\n", orNone(git.Branch))
+	fmt.Fprintf(w, "run branch base\t%s\n", orNone(git.Base))
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return printStoryBranches(git)
+}
+
+// printStoryBranches lists the story branches a run created, in creation order,
+// with what each was based on. Order is the whole point — it is what a stack
+// means — so it is printed as a list rather than a keyed table.
+func printStoryBranches(git session.PRDGitState) error {
+	branches := git.StoryBranches()
+	if len(branches) == 0 {
+		return nil
+	}
+
+	fmt.Printf("\nbranches (in creation order)\n")
+	w := table()
+	for _, b := range branches {
+		// A story under a single-branch layout has a record but no branch of its
+		// own; listing it here would invent one.
+		if !b.HasBranch() {
+			continue
+		}
+		fmt.Fprintf(w, "%s\t%s\ton %s%s\n", b.StoryID, b.Branch, orNone(b.Base), publishNote(b))
+	}
 	return w.Flush()
+}
+
+// publishArgs is one invocation of `loopctl publish`, kept as a struct so the
+// command stays within the project's parameter limit.
+type publishArgs struct {
+	prd     string
+	draft   bool
+	stacked bool
+	asJSON  bool
+}
+
+// publishPRD opens one pull request for a PRD's work.
+//
+// The refusals — a live run, a project that is not a git repository, a PRD with
+// no commit — are the session's, reported here as a plain error. Nothing in this
+// command re-implements them; that is the point of driving the engine from here.
+func publishPRD(ctx context.Context, s *session.Session, args publishArgs) error {
+	if args.stacked {
+		return publishStack(ctx, s, args)
+	}
+	report, err := s.PublishPullRequest(ctx, session.PublishRequest{PRD: args.prd, Draft: args.draft})
+	if err != nil {
+		return err
+	}
+	if args.asJSON {
+		return emitJSON(report)
+	}
+
+	w := table()
+	fmt.Fprintf(w, "branch\t%s\n", report.Branch)
+	fmt.Fprintf(w, "base\t%s\n", report.Base)
+	fmt.Fprintf(w, "stories\t%s\n", strings.Join(report.Stories, ", "))
+	if report.PR != nil {
+		fmt.Fprintf(w, "pull request\t#%d %s\n", report.PR.Number, report.PR.URL)
+	}
+	fmt.Fprintf(w, "action\t%s\n", publishAction(report.Updated))
+	return w.Flush()
+}
+
+// publishStack opens one pull request per story, from the bottom of the stack
+// upwards.
+//
+// The report is printed whether or not publishing succeeded: a stack that fails
+// half way has still created what it created, and the command's job is to say so
+// rather than to leave the user guessing what is on GitHub.
+func publishStack(ctx context.Context, s *session.Session, args publishArgs) error {
+	report, err := s.PublishStack(ctx, session.PublishRequest{PRD: args.prd, Draft: args.draft})
+	if len(report.Stories) == 0 {
+		return err
+	}
+	if args.asJSON {
+		if jsonErr := emitJSON(report); jsonErr != nil {
+			return jsonErr
+		}
+		return err
+	}
+	if printErr := printStackReport(report); printErr != nil {
+		return printErr
+	}
+	return err
+}
+
+func printStackReport(report session.StackReport) error {
+	w := table()
+	for _, story := range report.Stories {
+		fmt.Fprintf(w, "%s\t%s\ton %s\t%s\n",
+			story.StoryID, orNone(story.Branch), orNone(story.Base), storyOutcome(story))
+	}
+	return w.Flush()
+}
+
+// storyOutcome is what happened to one story, in the words that distinguish the
+// four cases: opened, updated, deliberately skipped, and failed.
+func storyOutcome(story session.StoryPublish) string {
+	if story.Error != "" {
+		return "failed: " + story.Error
+	}
+	if story.Skipped != "" {
+		return "skipped: " + story.Skipped
+	}
+	if story.PR == nil {
+		return "no pull request"
+	}
+	return fmt.Sprintf("%s #%d %s", publishVerb(story.Updated), story.PR.Number, story.PR.URL)
+}
+
+func publishVerb(updated bool) string {
+	if updated {
+		return "updated"
+	}
+	return "opened"
+}
+
+func publishAction(updated bool) string {
+	if updated {
+		return "updated the existing pull request"
+	}
+	return "opened a pull request"
+}
+
+// publishNote marks the branches that publishing must skip.
+func publishNote(b session.StoryBranch) string {
+	if b.HasSomethingToPublish() {
+		return ""
+	}
+	return "\tno commit"
+}
+
+// recordedLayout reports the layout a run has chosen for this PRD. A PRD that has
+// never run has none, which is not an error worth failing the command over.
+func recordedLayout(git session.PRDGitState) string {
+	if git.Layout == "" {
+		return "not chosen yet"
+	}
+	return string(git.Layout)
 }
 
 func orNone(v string) string {

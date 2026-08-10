@@ -42,13 +42,11 @@ describe("savePrdWorkflow", () => {
   it("stores the settings and starts no run", async () => {
     const ok = await savePrdWorkflow("checkout", {
       implementationAgent: "codex",
-      stackPerStory: true,
     } as never);
 
     expect(ok).toBe(true);
     expect(backend.saveWorkflow).toHaveBeenCalledWith("checkout", {
       implementationAgent: "codex",
-      stackPerStory: true,
     });
     expect(backend.start).not.toHaveBeenCalled();
   });

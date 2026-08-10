@@ -21,7 +21,6 @@
   let context = $state("");
   let authoringAgent = $state("");
   let implementationAgent = $state("");
-  let stackPerStory = $state(false);
   let creating = $state(false);
 
   let dialogEl = $state<HTMLDivElement | null>(null);
@@ -67,7 +66,7 @@
       await createPrd({
         name,
         context,
-        workflow: { implementationAgent, stackPerStory },
+        workflow: { implementationAgent },
       } as never);
     } finally {
       creating = false;
@@ -174,17 +173,9 @@
           {/each}
         </select>
       </label>
-      <p class="help">Executes the stories later. You can still change it at Start.</p>
-
-      <h3>Implementation workflow</h3>
-
-      <label class="check">
-        <input type="checkbox" bind:checked={stackPerStory} />
-        <span class="check-label">Stack a pull request per user story</span>
-      </label>
       <p class="help">
-        Applied when implementation starts. Choosing it creates no branches or pull
-        requests now.
+        Executes the stories later. You can still change it at Start, where you also
+        choose how the commits are arranged across branches.
       </p>
     </div>
 
@@ -292,17 +283,6 @@
   }
   input[type="text"] {
     font-family: var(--font-mono);
-  }
-
-  label.check {
-    align-items: center;
-  }
-  label.check input {
-    flex: none;
-    margin-left: 150px;
-  }
-  .check-label {
-    width: auto;
   }
 
   .help {

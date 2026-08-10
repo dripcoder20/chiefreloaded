@@ -23,7 +23,7 @@ func TestCreatePRDMakesItImmediatelyVisible(t *testing.T) {
 	got, err := s.CreatePRD(t.Context(), NewPRDRequest{
 		Name:     "secondary-email",
 		Context:  "Let people nominate a second email on a contact.",
-		Workflow: PRDWorkflow{ImplementationAgent: "codex", StackPerStory: true},
+		Workflow: PRDWorkflow{ImplementationAgent: "codex"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,10 +84,7 @@ func TestCreatePRDSavesTheChosenWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := PRDWorkflow{
-		ImplementationAgent: "codex",
-		StackPerStory:       true,
-	}
+	want := PRDWorkflow{ImplementationAgent: "codex"}
 	if _, err := s.CreatePRD(t.Context(), NewPRDRequest{Name: "checkout", Workflow: want}); err != nil {
 		t.Fatal(err)
 	}

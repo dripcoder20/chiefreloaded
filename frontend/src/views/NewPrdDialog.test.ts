@@ -52,17 +52,13 @@ describe("the New PRD dialog", () => {
     await fireEvent.input(view.getByPlaceholderText(/Optional/), {
       target: { value: "Let people nominate a second email." },
     });
-    await fireEvent.click(view.getByLabelText("Stack a pull request per user story"));
     await fireEvent.click(view.getByRole("button", { name: "Create PRD" }));
 
     await waitFor(() => expect(store.createPrd).toHaveBeenCalledTimes(1));
     expect(store.createPrd).toHaveBeenCalledWith({
       name: "secondary-email",
       context: "Let people nominate a second email.",
-      workflow: {
-        implementationAgent: "codex",
-        stackPerStory: true,
-      },
+      workflow: { implementationAgent: "codex" },
     });
   });
 

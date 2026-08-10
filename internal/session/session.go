@@ -155,13 +155,14 @@ func (s *Session) resolveProvider(override string) (*agentx.GroupLeader, error) 
 	return agentx.NewGroupLeader(p), nil
 }
 
-// afterStoryDone is the per-story git hook: push the branch, open its draft PR,
-// and cut the next one. Implemented in stack.go; a no-op when stacking is off.
+// afterStoryDone is the per-story git hook: record what the story left behind and
+// name the base of the story above it. Implemented in stack.go; a no-op under a
+// single-branch layout.
 //
-// It runs after the status write and after the agent process has exited, which
-// is what makes touching git safe at all.
-func (s *Session) afterStoryDone(ctx context.Context, r *run, storyID, title string, check CommitCheck) error {
-	return s.stackAfterStory(ctx, r, storyID, title, check)
+// It reaches no remote. A run's whole effect is local, so nothing here pushes or
+// opens a pull request.
+func (s *Session) afterStoryDone(r *run, done storyDone) error {
+	return s.stackAfterStory(r, done)
 }
 
 // Events is the session's single ordered event stream. It is closed by Close.
@@ -352,7 +353,7 @@ func (s *Session) attachGitState(detail *PRDDetail) {
 	detail.PR = cachedPR(git, detail.Branch)
 
 	for i := range detail.Stories {
-		branch := git.Stories[detail.Stories[i].ID]
+		branch := git.BranchFor(detail.Stories[i].ID)
 		if branch == "" {
 			continue
 		}

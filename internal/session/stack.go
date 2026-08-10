@@ -11,88 +11,67 @@ import (
 	"github.com/dripcoder/loop/internal/ghstack"
 )
 
-// stackAfterStory runs the per-story git lifecycle once a story is verified and
-// marked done: push its branch, open a draft pull request based on the branch
-// below, then cut the next story's branch off it and continue.
+// storyDone is one verified story, as everything that runs after the agent has
+// exited sees it.
+type storyDone struct {
+	ID    string
+	Title string
+	Check CommitCheck
+}
+
+// stackAfterStory closes out one story's place in the stack once it is verified
+// and marked done, and hands its branch on as the base of the story above.
 //
-// Nothing here is fatal. The chosen policy is to keep going, so every failure is
-// recorded and reported and the run proceeds to the next story. Silence would be
-// the real failure mode, which is why each one publishes an event the UI keeps
-// on screen rather than a toast that scrolls away.
-func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title string, check CommitCheck) error {
-	cfg := s.LoopConfig()
-	if !s.stacksPerStory(r.prdName) {
+// It deliberately touches nothing outside the repository. A run pushes no branch
+// and opens no pull request — publishing is an action the user takes once they
+// have read the result — so all that is left here is the bookkeeping a later
+// publish reads back off disk.
+func (s *Session) stackAfterStory(r *run, done storyDone) error {
+	// Recorded under either layout, because whether a story committed is what
+	// decides if a later pull request should describe it, and this is the only
+	// moment that is known. Under a single-branch layout no story owns a branch,
+	// but the entry captureStoryBody just created is still there to mark.
+	if done.Check.Verdict == VerdictNoCommit {
+		_ = s.recordNoCommit(r.prdName, done.ID)
+	}
+	if s.layoutFor(r.prdName) != LayoutBranchPerStory {
 		return nil
 	}
 
-	// A story that changed nothing has nothing to review. Carry the branch
-	// pointer forward untouched so the next story stacks on the same base.
-	if check.Verdict == VerdictNoCommit {
+	if done.Check.Verdict == VerdictNoCommit {
 		s.publish(Event{
-			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
-			Text: "no commit for this story; skipping its pull request",
-			Git:  &GitEvent{Op: "pr-create", State: "warn", Fatal: false},
+			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: done.ID,
+			Text: "no commit for this story; it has nothing to publish",
+			Git:  &GitEvent{Op: "stack", State: "warn", Fatal: false},
 		})
+		s.skipEmptyStory(r, done.ID)
 		return nil
-	}
-
-	st := s.stackState(r)
-	branch := st.branchFor(storyID, title)
-	base := st.baseFor(storyID)
-
-	// The base of a stacked pull request has to exist on the remote. If the
-	// previous story's push failed, walk down to the nearest branch that did make
-	// it — ultimately the trunk — rather than letting gh fail with something
-	// opaque about a missing ref.
-	base, deviated := st.resolveRemoteBase(ctx, r.workDir, base)
-
-	body := s.prBody(r, storyID, title, check, base, deviated)
-	spec := ghstack.Spec{
-		Dir:   r.workDir,
-		Head:  branch,
-		Base:  base,
-		Title: fmt.Sprintf("feat(%s): %s %s", r.prdName, storyID, title),
-		Body:  body,
-		Draft: cfg.Git.Draft,
-	}
-
-	s.publish(Event{
-		Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
-		Git: &GitEvent{Op: "push", Branch: branch, BaseBranch: base, State: "running"},
-	})
-
-	pr, err := st.driver.Submit(ctx, spec)
-	if err != nil {
-		r.noteGitError()
-		s.publish(Event{
-			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
-			Text:  err.Error(),
-			Git:   &GitEvent{Op: "pr-create", Branch: branch, BaseBranch: base, State: "error", Fatal: false, Hint: prHint(err)},
-			Error: errInfo(err, prHint(err)),
-		})
-		// Still cut the next branch: the commits are local and valid, and
-		// stopping here would strand every later story too.
-	} else {
-		st.recordPR(storyID, branch, pr)
-		// Also to disk, so the link survives the run that opened it.
-		_ = s.recordPullRequest(r.prdName, branch, prRefFrom(pr, s.now().UnixMilli()))
-		s.publish(Event{
-			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,
-			Text: fmt.Sprintf("opened %s", pr.URL),
-			Git: &GitEvent{
-				Op: "pr-create", Branch: branch, BaseBranch: base,
-				PRNumber: pr.Number, PRURL: pr.URL, State: "ok",
-			},
-		})
 	}
 
 	// The next story's branch is created when that story starts, not here, so
 	// there is one place that guarantees "HEAD is this story's branch". All that
 	// is needed now is to remember what it will stack on.
+	st := s.stackState(r)
 	if nextID, _ := nextIncompleteStory(r.prdPath); nextID != "" {
-		st.setBase(nextID, branch)
+		st.setBase(nextID, st.branchFor(done.ID, done.Title))
 	}
 	return nil
+}
+
+// skipEmptyStory records that a story committed nothing and hands its base on to
+// the story above it.
+//
+// A branch with no commit on it is the same commit as the branch below, so it has
+// nothing to review and must not become anyone's base: the story above stacks on
+// whatever this one was going to stack on, which is also what git does when its
+// branch is cut from this unchanged checkout.
+//
+// The flag itself is recorded by the caller, under either layout.
+func (s *Session) skipEmptyStory(r *run, storyID string) {
+	st := s.stackState(r)
+	if nextID, _ := nextIncompleteStory(r.prdPath); nextID != "" {
+		st.setBase(nextID, st.baseFor(storyID))
+	}
 }
 
 // ensureStoryBranch puts the worktree on the branch this story belongs to.
@@ -103,15 +82,19 @@ func (s *Session) stackAfterStory(ctx context.Context, r *run, storyID, title st
 // what happened before this existed, and the stack driver rejected every
 // command because no stack had been created.
 func (s *Session) ensureStoryBranch(ctx context.Context, r *run, storyID, title string) error {
-	if !s.stacksPerStory(r.prdName) {
+	if s.layoutFor(r.prdName) != LayoutBranchPerStory {
 		return nil
 	}
 
 	st := s.stackState(r)
 	branch := st.branchFor(storyID, title)
-	// Recorded before the checkout: the branch belongs to this story from the
-	// moment it is named, and a run that dies mid-checkout has still claimed it.
-	_ = s.recordBranch(r.prdName, storyID, branch)
+	// Recorded before the checkout, with the branch it will be cut from: the
+	// branch belongs to this story from the moment it is named, a run that dies
+	// mid-checkout has still claimed it, and the base is what lets whatever
+	// publishes later rebuild the stack without the run's in-memory state.
+	_ = s.recordStoryBranch(r.prdName, StoryBranch{
+		StoryID: storyID, Branch: branch, Base: st.baseFor(storyID),
+	})
 
 	if currentBranch(ctx, r.workDir) == branch {
 		return nil
@@ -149,56 +132,119 @@ func (s *Session) ensureStoryBranch(ctx context.Context, r *run, storyID, title 
 	return nil
 }
 
-// prBody renders the pull request description for a story.
+// prBodyDraft is everything a story's pull-request description is composed from,
+// gathered at the one moment all of it is still true.
+type prBodyDraft struct {
+	Story StorySnap
+	Check CommitCheck
+	// Base is the branch this story's work sits on top of.
+	Base string
+	// Notes is the story's latest progress.md entry.
+	Notes string
+}
+
+// captureStoryBody composes a story's pull-request description and stores it
+// against the story's branch record.
 //
-// The story is read from the PRD *before* the status write wherever possible,
-// because SetStoryStatus(id, "done") ticks every acceptance-criteria checkbox.
-// Rendering after that would produce a body claiming every criterion was met
-// regardless of whether anything was verified.
-func (s *Session) prBody(r *run, storyID, title string, check CommitCheck, base string, deviated bool) string {
+// It must run before markDone writes the status. SetStoryStatus(id, "done") ticks
+// every acceptance-criteria checkbox as a side effect, so a description composed
+// after that write would present the write itself as evidence that each criterion
+// was met. Nothing publishes during a run any more, which makes this the only
+// moment the honest text exists — hence composing it now and keeping it, rather
+// than rendering it whenever the user eventually publishes.
+func (s *Session) captureStoryBody(r *run, done storyDone) {
+	story := s.storySnapshotFor(r, done.ID)
+	if story == nil {
+		return
+	}
+	_ = s.recordStoryBody(r.prdName, done.ID, prBody(prBodyDraft{
+		Story: *story,
+		Check: done.Check,
+		Base:  s.baseForStory(r, done.ID),
+		Notes: s.progressNoteFor(r, done.ID),
+	}))
+}
+
+// baseForStory is the branch a story's work sits on top of: the story below it
+// under a branch per story, and whatever the run branch was cut from otherwise.
+// Empty when nothing has recorded one, which a description simply omits.
+func (s *Session) baseForStory(r *run, storyID string) string {
+	if s.layoutFor(r.prdName) == LayoutBranchPerStory {
+		return s.stackState(r).baseFor(storyID)
+	}
+	state, err := s.PRDGitFor(r.prdName)
+	if err != nil {
+		return ""
+	}
+	return state.Base
+}
+
+// prBody renders the pull request description for a story.
+func prBody(d prBodyDraft) string {
 	var b strings.Builder
 
-	story := s.storySnapshotFor(r, storyID)
-	if story != nil && story.Description != "" {
-		b.WriteString(story.Description)
+	if d.Story.Description != "" {
+		b.WriteString(d.Story.Description)
 		b.WriteString("\n\n")
 	}
+	writeCriteria(&b, d.Story)
+	writeCommits(&b, d.Check)
 
-	if story != nil && len(story.Criteria) > 0 {
-		b.WriteString("## Acceptance criteria\n\n")
-		for _, c := range story.Criteria {
-			fmt.Fprintf(&b, "- [ ] %s\n", c)
-		}
-		b.WriteString("\nThese are the criteria as written in the PRD. Loop does not verify them.\n\n")
-	}
-
-	if len(check.NewCommits) > 0 {
-		b.WriteString("## Commits\n\n")
-		for _, h := range check.NewCommits {
-			short := h
-			if len(short) > 8 {
-				short = short[:8]
-			}
-			fmt.Fprintf(&b, "- `%s`\n", short)
-		}
-		b.WriteString("\n")
-	}
-
-	if notes := s.progressNoteFor(r, storyID); notes != "" {
+	if d.Notes != "" {
 		b.WriteString("## Progress notes\n\n")
-		b.WriteString(notes)
+		b.WriteString(d.Notes)
 		b.WriteString("\n\n")
 	}
-
-	if check.Verdict == VerdictWrongSubject {
+	if d.Check.Verdict == VerdictWrongSubject {
 		b.WriteString("> The agent's commit subject did not match the expected convention.\n\n")
 	}
-	if deviated {
-		fmt.Fprintf(&b, "> Base retargeted to `%s`: the branch below this one is not on the remote.\n\n", base)
-	}
 
-	fmt.Fprintf(&b, "---\nStacked on `%s` · %s · opened by Loop\n", base, storyID)
+	b.WriteString("---\n")
+	if d.Base != "" {
+		fmt.Fprintf(&b, "Based on `%s` · ", d.Base)
+	}
+	fmt.Fprintf(&b, "%s · prepared by Loop\n", d.Story.ID)
 	return b.String()
+}
+
+// writeCriteria renders the acceptance criteria and says what they are worth.
+//
+// A story whose criteria are no longer authoritative has had every box ticked by
+// the status write rather than by anything being verified, and a reviewer reading
+// the description has no way to tell the two apart unless it says so.
+func writeCriteria(b *strings.Builder, story StorySnap) {
+	if len(story.Criteria) == 0 {
+		return
+	}
+	b.WriteString("## Acceptance criteria\n\n")
+	for _, c := range story.Criteria {
+		fmt.Fprintf(b, "- [ ] %s\n", c)
+	}
+	b.WriteString("\n")
+	b.WriteString(criteriaNote(story))
+	b.WriteString("\n")
+}
+
+func criteriaNote(story StorySnap) string {
+	if story.CriteriaAreAuthoritative {
+		return "These are the criteria as the PRD stated them when the story was verified. Loop does not verify them.\n"
+	}
+	return "These criteria were read after the story was marked done, by which point the status write had already ticked every box.\n"
+}
+
+func writeCommits(b *strings.Builder, check CommitCheck) {
+	if len(check.NewCommits) == 0 {
+		return
+	}
+	b.WriteString("## Commits\n\n")
+	for _, h := range check.NewCommits {
+		short := h
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		fmt.Fprintf(b, "- `%s`\n", short)
+	}
+	b.WriteString("\n")
 }
 
 func (s *Session) storySnapshotFor(r *run, storyID string) *StorySnap {
@@ -302,20 +348,6 @@ func fastForwardable(ctx context.Context, dir, branch string) bool {
 	return gitRun(ctx, dir, "merge-base", "--is-ancestor", "HEAD", "refs/heads/"+branch) == nil
 }
 
-func prHint(err error) string {
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "not logged") || strings.Contains(msg, "authentication"):
-		return "gh auth login"
-	case strings.Contains(msg, "draft") && strings.Contains(msg, "plan"):
-		return "draft pull requests need a paid plan on private repositories; set git.draft to false"
-	case strings.Contains(msg, "no such remote") || strings.Contains(msg, "does not appear to be a git repository"):
-		return "add a remote named origin"
-	default:
-		return ""
-	}
-}
-
 // ------------------------------------------------------------ stack state --
 
 // stackState tracks the branch and pull request per story for one run.
@@ -331,7 +363,6 @@ type stackState struct {
 	initialised bool
 
 	bases map[string]string // storyID -> the branch below it
-	prs   map[string]PRRef
 }
 
 func (s *Session) stackState(r *run) *stackState {
@@ -339,23 +370,38 @@ func (s *Session) stackState(r *run) *stackState {
 	defer s.mu.Unlock()
 	if r.stack == nil {
 		cfg := s.loopCfgLocked()
-		trunk := cfg.Git.BaseBranch
-		if trunk == "" && s.project != nil {
-			trunk = s.project.DefaultBase
-		}
-		if trunk == "" {
-			trunk = "main"
-		}
 		r.stack = &stackState{
 			driver: ghstack.Select(context.Background(), string(cfg.Git.StackDriver)),
 			cfg:    cfg.Git,
 			prd:    r.prdName,
-			trunk:  trunk,
+			trunk:  s.trunkBranchLocked(),
 			bases:  make(map[string]string),
-			prs:    make(map[string]PRRef),
 		}
 	}
 	return r.stack
+}
+
+// fallbackTrunk is what a repository with no configured base branch and no
+// detected default branch is assumed to target.
+const fallbackTrunk = "main"
+
+// trunkBranch is what the bottom of a PRD's work targets: the configured base
+// branch, then the repository's own default. It is what a pull request opened for
+// a PRD is based on, and what the bottom of a stack was cut from.
+func (s *Session) trunkBranch() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trunkBranchLocked()
+}
+
+func (s *Session) trunkBranchLocked() string {
+	if trunk := s.loopCfgLocked().Git.BaseBranch; trunk != "" {
+		return trunk
+	}
+	if s.project != nil && s.project.DefaultBase != "" {
+		return s.project.DefaultBase
+	}
+	return fallbackTrunk
 }
 
 func (st *stackState) branchFor(storyID, title string) string {
@@ -371,18 +417,15 @@ func (st *stackState) baseFor(storyID string) string {
 
 func (st *stackState) setBase(storyID, base string) { st.bases[storyID] = base }
 
-func (st *stackState) recordPR(storyID, branch string, pr ghstack.PR) {
-	st.prs[storyID] = PRRef{
-		Number: pr.Number, URL: pr.URL, State: pr.State,
-		Draft: pr.Draft, Base: pr.Base,
-	}
-}
-
-// resolveRemoteBase walks down the stack to the nearest base that exists on the
-// remote, so one failed push does not cascade into every later pull request.
-func (st *stackState) resolveRemoteBase(ctx context.Context, dir, base string) (string, bool) {
-	if base == st.trunk || ghstack.RemoteBranchExists(ctx, dir, base) {
+// resolveRemoteBase falls back to the trunk when a base is not on the remote, so
+// one failed push does not cascade into every later pull request.
+//
+// Nothing during a run needs this — a run reaches no remote at all. It is the
+// stack's own rule about what a published base may be, and publishing applies it
+// to every layer it opens.
+func resolveRemoteBase(ctx context.Context, dir, base, trunk string) (string, bool) {
+	if base == trunk || ghstack.RemoteBranchExists(ctx, dir, base) {
 		return base, false
 	}
-	return st.trunk, true
+	return trunk, true
 }

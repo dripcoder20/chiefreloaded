@@ -389,6 +389,12 @@ func (r *run) settleStory(
 // This is the write chief performs the moment the sentinel appears. Doing it
 // here, after verification, is the whole reason RunStory exists.
 func (r *run) markDone(ctx context.Context, storyID, storyTitle string, check CommitCheck) (outcome, error) {
+	done := storyDone{ID: storyID, Title: storyTitle, Check: check}
+
+	// Before the status write, never after: SetStoryStatus ticks every acceptance
+	// criterion, so this is the last moment the story still says what was verified.
+	r.sess.captureStoryBody(r, done)
+
 	if err := prd.SetStoryStatus(r.prdPath, storyID, "done"); err != nil {
 		return outcomeProgressed, fmt.Errorf("mark %s done: %w", storyID, err)
 	}
@@ -407,10 +413,9 @@ func (r *run) markDone(ctx context.Context, storyID, storyTitle string, check Co
 		},
 	})
 
-	// Hook point for M7: push the story branch, open its draft PR, and cut the
-	// next branch off it. Deliberately after the status write and after the
-	// agent process is gone.
-	if err := r.sess.afterStoryDone(ctx, r, storyID, storyTitle, check); err != nil {
+	// Record what the story left behind and name the base of the story above it.
+	// Deliberately after the status write and after the agent process is gone.
+	if err := r.sess.afterStoryDone(r, done); err != nil {
 		r.noteGitError()
 		r.sess.publish(Event{
 			Kind: EvGit, RunID: r.id, PRD: r.prdName, StoryID: storyID,

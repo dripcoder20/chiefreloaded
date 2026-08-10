@@ -36,7 +36,7 @@
     const got = await api.prd.workflow(name).catch(() => null);
     // Only adopt it if the selection has not moved on while we were reading.
     if (loadedFor === name) {
-      workflow = got ?? ({ implementationAgent: "", stackPerStory: false } as PRDWorkflow);
+      workflow = got ?? ({ implementationAgent: "" } as PRDWorkflow);
     }
   }
 
@@ -88,18 +88,6 @@
           still change it at Start.
         </p>
 
-        <label class="check">
-          <input
-            type="checkbox"
-            checked={workflow.stackPerStory ?? false}
-            onchange={(e) => update((w) => (w.stackPerStory = e.currentTarget.checked))}
-          />
-          <span class="check-label">Stack a pull request per user story</span>
-        </label>
-        <p class="help">
-          Overrides the project's git mode for this PRD alone. Applied when the run
-          starts — nothing is branched or opened now.
-        </p>
       </section>
 
       <p class="status" aria-live="polite">{saving ? "Saving…" : "Saved automatically"}</p>
@@ -154,17 +142,6 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-control);
     font: inherit;
-  }
-
-  label.check {
-    align-items: center;
-  }
-  label.check input {
-    flex: none;
-    margin-left: 150px;
-  }
-  .check-label {
-    width: auto;
   }
 
   .help {
