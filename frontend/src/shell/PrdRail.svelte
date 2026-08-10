@@ -36,7 +36,7 @@
    * and there are none in a fresh session.
    */
   function stateOf(prd: { name: string; state?: string }): string {
-    return app.runs.find((r) => r.prd === prd.name)?.state ?? prd.state ?? "idle";
+    return app.latestRunFor(prd.name)?.state ?? prd.state ?? "idle";
   }
 
   // The three actions, shared verbatim by the dropdown and the context menu so

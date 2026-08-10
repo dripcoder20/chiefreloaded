@@ -229,6 +229,17 @@ class AppState {
   get currentRun(): RunSnapshot | null {
     const prd = this.selectedPrd;
     if (!prd) return null;
+    return this.latestRunFor(prd);
+  }
+
+  /**
+   * The newest run of a PRD, by start time.
+   *
+   * Every reader of per-PRD run state must come through here: taking the first
+   * match kept the rail's status dot red after a cancelled run, because the
+   * stale run stayed in the list ahead of the one actually underway.
+   */
+  latestRunFor(prd: string): RunSnapshot | null {
     return this.runs
       .filter((r) => r.prd === prd)
       .reduce<RunSnapshot | null>(
@@ -864,10 +875,11 @@ export async function startRun(agent?: string): Promise<void> {
   const prd = app.selectedPrd;
   if (!prd) return;
   // At most one session per PRD: refuse while a Start (or any action) for this
-  // PRD is still resolving, or while a live session already exists.
+  // PRD is still resolving, or while a live session already exists. Any run of
+  // the PRD counts — checking only the first match let a stale stopped run
+  // mask a live one.
   if (app.pending[prd]) return;
-  const existing = app.runs.find((r) => r.prd === prd);
-  if (existing && isActive(existing.state)) return;
+  if (app.runs.some((r) => r.prd === prd && isActive(r.state))) return;
 
   setPending(prd, "starting");
   // Dismiss any stale start-error dialog for this PRD; a fresh failure re-sets it.
