@@ -140,7 +140,7 @@ func TestTheLayoutIsSettledOnceAStoryHasCommitted(t *testing.T) {
 // auto-answering and every caller that does not care keep working.
 func TestAnAnswerWithNoLayoutKeepsThePreselectedOne(t *testing.T) {
 	ask := askContext{layout: LayoutBranchPerStory, layoutOffered: true}
-	got, err := resolveLayout("checkout", ask, Answer{OptionID: optWorktree})
+	got, err := resolveLayout("checkout", ask, Answer{OptionID: optBranch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,22 +219,29 @@ func TestPerStoryLayoutRefusesToRunOutsideAWorktree(t *testing.T) {
 		t.Fatal("requireWorktree is expected to be on by default")
 	}
 
-	err := requireWorktreeFor(LayoutBranchPerStory, cfg, optBranch)
+	inWorktree := Answer{OptionID: optBranch, Inputs: map[string]string{inputWorktree: "true"}}
+
+	err := requireWorktreeFor(LayoutBranchPerStory, cfg, Answer{OptionID: optBranch})
 	if err == nil {
 		t.Fatal("a branch per story inside the checkout must be refused")
 	}
 	if !strings.Contains(err.Error(), "worktree") {
 		t.Errorf("the refusal should say what to do instead: %v", err)
 	}
-	if err := requireWorktreeFor(LayoutBranchPerStory, cfg, optWorktree); err != nil {
+	if err := requireWorktreeFor(LayoutBranchPerStory, cfg, inWorktree); err != nil {
 		t.Errorf("a worktree is exactly what it asked for: %v", err)
 	}
-	if err := requireWorktreeFor(LayoutOneBranch, cfg, optBranch); err != nil {
+	if err := requireWorktreeFor(LayoutOneBranch, cfg, Answer{OptionID: optBranch}); err != nil {
 		t.Errorf("one branch does not switch the checkout: %v", err)
+	}
+	// The toggle cannot rescue "run here": there is no worktree in that answer.
+	here := Answer{OptionID: optHere, Inputs: map[string]string{inputWorktree: "true"}}
+	if err := requireWorktreeFor(LayoutBranchPerStory, cfg, here); err == nil {
+		t.Error("running here is refused for per-story whatever the toggle says")
 	}
 
 	cfg.Git.RequireWorktree = false
-	if err := requireWorktreeFor(LayoutBranchPerStory, cfg, optHere); err != nil {
+	if err := requireWorktreeFor(LayoutBranchPerStory, cfg, Answer{OptionID: optHere}); err != nil {
 		t.Errorf("with requireWorktree off the override stands: %v", err)
 	}
 }

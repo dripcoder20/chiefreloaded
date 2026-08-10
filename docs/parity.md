@@ -34,8 +34,8 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 |---|---|---|---|
 | Branch safety decision | `app.go:726`, `1092` | done | Now data (`Question`), not keystroke handling. Unit-tested. |
 | Worktree provisioning | `app.go:1627` | done | Output streamed and genuinely cancellable; chief's `CombinedOutput` is neither. |
-| Per-PRD push / PR | `app.go:1310` | todo | Config keys exist and migrate; the action is not wired. |
-| **Per-story stacked PRs** | — | done | New. `gh stack` with a manual `gh pr create --draft --base` fallback. Verified against real GitHub: 3 stories → 3 stacked drafts, and merging the bottom auto-retargets the next onto trunk. |
+| Per-PRD push / PR | `app.go:1310` | done | The Pull request menu, after the run. One pull request for the PRD's work; a second press updates it. |
+| **Per-story stacked PRs** | — | done | New. Published on request, not during the run: one pull request per story, bottom-up, via `gh pr create --draft --base`. A failed layer stops the ones above it and the control is pressed again to finish. Verified against real GitHub: 3 stories → 3 stacked drafts, and merging the bottom auto-retargets the next onto trunk. |
 | Merge branch | `picker.go` | todo | Must use `gh stack merge`; GitHub rejects `gh pr merge` on a stacked PR. |
 | Clean worktree | `picker.go` | todo | |
 | Orphaned worktree detection | `git.DetectOrphanedWorktrees` | todo | |
@@ -77,5 +77,9 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 - **Acceptance criteria on completed stories are labelled unreliable.**
   `SetStoryStatus(id, "done")` ticks every box as a side effect, so the checklist
   records the status write and nothing else.
+- **Publishing is an action, not a step of the run.** A run commits and nothing
+  else; pushing branches and opening pull requests is a control you press when
+  the work is ready. Opening pull requests from inside the loop meant a run
+  could not be reconsidered after it had spoken to GitHub.
 - **No `prd.json` fallbacks.** `app.go` still references that path in four
   places though `LoadPRD` is markdown-only; those paths are simply broken.

@@ -28,8 +28,18 @@ const store = vi.hoisted(() => ({
       { name: "checkout", completed: 1, total: 3, state: "idle" },
       { name: "docs-site", completed: 2, total: 6, state: "idle" },
     ],
-    runs: [] as Array<{ prd: string; state: string }>,
+    runs: [] as Array<{ prd: string; state: string; startedAt?: number }>,
     selectedPrd: "checkout" as string | null,
+    // Mirrors the real store: the rail reads the newest run of each PRD.
+    latestRunFor(prd: string) {
+      return this.runs
+        .filter((r) => r.prd === prd)
+        .reduce<{ prd: string; state: string; startedAt?: number } | null>(
+          (latest, run) =>
+            !latest || (run.startedAt ?? 0) >= (latest.startedAt ?? 0) ? run : latest,
+          null,
+        );
+    },
   },
 }));
 
@@ -372,6 +382,21 @@ describe("PRD state without a run", () => {
       { name: "checkout", completed: 7, total: 7, state: "complete" },
     ] as never;
     store.app.runs = [{ prd: "checkout", state: "running" }];
+    render(PrdRail);
+
+    expect(dotFor("checkout").className).toContain("running");
+  });
+
+  // A cancelled run stays in the list when the user starts again. The dot has
+  // to follow the newest run, not whichever happens to be listed first.
+  it("turns back to running after a cancelled run is restarted", () => {
+    store.app.prds = [
+      { name: "checkout", completed: 0, total: 13, state: "idle" },
+    ] as never;
+    store.app.runs = [
+      { prd: "checkout", state: "error", startedAt: 1_000 },
+      { prd: "checkout", state: "running", startedAt: 2_000 },
+    ];
     render(PrdRail);
 
     expect(dotFor("checkout").className).toContain("running");

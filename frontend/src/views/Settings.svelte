@@ -64,24 +64,16 @@
         >
           <option value="off">off — the agent commits, nothing else</option>
           <option value="per-prd">per-prd — one branch for the whole PRD</option>
-          <option value="per-story">per-story — a stacked branch and draft PR per story</option>
+          <option value="per-story">per-story — a stacked branch per story</option>
         </select>
       </label>
 
       {#if cfg.git.mode === "per-story"}
         <p class="note">
-          Every story gets its own branch stacked on the one below it, pushed with a draft
-          pull request the moment it completes. The loop does not wait for review.
+          Every story gets its own branch stacked on the one below it. A run only commits:
+          it pushes nothing and opens no pull request. Publish the stack yourself from the
+          PRD's Pull request menu when the work is ready.
         </p>
-
-        <label class="row">
-          <span class="label">Draft pull requests</span>
-          <input
-            type="checkbox"
-            checked={cfg.git.draft}
-            onchange={(e) => update((c) => (c.git.draft = e.currentTarget.checked))}
-          />
-        </label>
 
         <label class="row">
           <span class="label">Require a worktree</span>

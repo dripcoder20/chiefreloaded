@@ -308,6 +308,19 @@ describe("a PRD with more than one run", () => {
     expect(app.canStop).toBe(true);
   });
 
+  // The rail's status dot reads run state per PRD. A cancelled run stays in the
+  // list, so looking at anything but the newest run left the dot red after the
+  // user started again.
+  it("reports the newest run's state after a cancelled run is restarted", () => {
+    app.runs = [
+      runAt("run_1", LoopState.StateError, 1_000),
+      runAt("run_2", LoopState.StateRunning, 2_000),
+    ];
+
+    expect(app.latestRunFor("checkout")?.state).toBe(LoopState.StateRunning);
+    expect(app.latestRunFor("elsewhere")).toBeNull();
+  });
+
   it("still stops the second run after start, stop, start", () => {
     app.runs = [runAt("run_1", LoopState.StateRunning, 1_000)];
     expect(app.canStop).toBe(true);

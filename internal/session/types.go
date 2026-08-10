@@ -218,6 +218,10 @@ type Option struct {
 	Hint        string `json:"hint,omitempty"` // e.g. the target path
 	Recommended bool   `json:"recommended"`
 	Destructive bool   `json:"destructive"`
+	// DisabledWhen greys the option out while every named input holds the given
+	// value. The engine refuses the combination anyway; carrying the rule here
+	// lets the UI close the door instead of springing the refusal afterwards.
+	DisabledWhen map[string]string `json:"disabledWhen,omitempty"`
 }
 
 // Input is a field attached to a question, answered alongside the option rather
@@ -232,6 +236,8 @@ type Input struct {
 	Label       string `json:"label"`
 	Value       string `json:"value"`
 	Placeholder string `json:"placeholder,omitempty"`
+	// Checkbox renders the field as a boolean toggle; Value is "true" or "false".
+	Checkbox bool `json:"checkbox,omitempty"`
 	// Choices, when present, are the only values the answer may carry for this
 	// key. Value is the preselected one.
 	Choices []Choice `json:"choices,omitempty"`
@@ -249,6 +255,10 @@ type Choice struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
 	Hint  string `json:"hint,omitempty"`
+	// Forces pins other inputs to these values while this choice is selected —
+	// e.g. per-story layout pinning the worktree toggle on. The pinned fields
+	// render locked, so the constraint is visible before the answer is sent.
+	Forces map[string]string `json:"forces,omitempty"`
 }
 
 // BranchLayout is how a run arranges its commits across branches.

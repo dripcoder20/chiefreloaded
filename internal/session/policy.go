@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/dripcoder/loop/internal/chief/config"
@@ -104,16 +105,16 @@ func (a askContext) perStory() bool { return a.layout == LayoutBranchPerStory }
 
 // Option IDs for the branch-safety question.
 const (
-	optWorktree = "worktree"
-	optBranch   = "branch"
-	optHere     = "here"
-	optCancel   = "cancel"
+	optBranch = "branch"
+	optHere   = "here"
+	optCancel = "cancel"
 )
 
 // Input keys the branch-safety answer may carry.
 const (
-	inputBranch = "branch"
-	inputLayout = "layout"
+	inputBranch   = "branch"
+	inputLayout   = "layout"
+	inputWorktree = "worktree"
 )
 
 // branchSafetyQuestion returns the decision a run needs before it may start.
@@ -138,9 +139,14 @@ const (
 // prompt of its own, because two modal decisions before a run starts is one too
 // many — and because where the commits go and how they are arranged are one
 // decision to the person making them.
+//
+// The worktree is an input too, not an option: it qualifies "create a branch"
+// rather than competing with it. That also keeps the dialog honest when the
+// layout selection changes — per-story pins the toggle on via Forces instead of
+// this function baking a per-story option set that goes stale the moment the
+// user picks the other layout.
 func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask askContext) *Question {
 	protected := p.Branch != "" && git.IsProtectedBranch(p.Branch)
-	perStory := ask.perStory()
 	othersInRoot := ask.othersInRoot
 
 	worktreeHint := filepath.Join(".chief", "worktrees", prdName)
@@ -149,7 +155,7 @@ func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask 
 	q := &Question{
 		Kind:          QBranchSafety,
 		PRD:           prdName,
-		DefaultOption: optWorktree,
+		DefaultOption: optBranch,
 		Inputs: []Input{{
 			Key:   inputBranch,
 			Label: "Branch name",
@@ -159,64 +165,75 @@ func branchSafetyQuestion(p Project, cfg config.LoopConfig, prdName string, ask 
 	if ask.layoutOffered {
 		q.Inputs = append(q.Inputs, layoutInput(ask, cfg))
 	}
+	q.Inputs = append(q.Inputs, worktreeInput(ask, cfg, worktreeHint))
+
+	branch := Option{ID: optBranch, Label: "Create a branch", Hint: suggested, Recommended: true}
+	here := hereOption(p, cfg, othersInRoot)
+	cancel := Option{ID: optCancel, Label: "Cancel"}
 
 	switch {
-	case perStory:
-		// Per-story mode genuinely requires isolation, so the wording says so
-		// rather than offering "continue here" as an equal choice.
-		q.Title = "Per-story branches need a worktree"
-		q.Body = "Each story gets its own branch. Switching branches in this " +
-			"checkout would move your working tree between stories."
-		q.Options = []Option{
-			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint, Recommended: true},
-			{ID: optCancel, Label: "Cancel"},
-		}
-		if !cfg.Git.RequireWorktree {
-			q.Options = append(q.Options[:1],
-				append([]Option{{
-					ID: optHere, Label: "Run here anyway", Hint: "./", Destructive: true,
-				}}, q.Options[1:]...)...)
-		}
-
 	case othersInRoot:
 		q.Title = "This directory is already in use"
 		q.Body = "Another PRD is running here. Two agents in one working tree " +
 			"will overwrite each other."
-		q.Options = []Option{
-			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint, Recommended: true},
-			{ID: optBranch, Label: "Create a branch", Hint: suggested},
-			{ID: optHere, Label: "Run here anyway", Hint: "./", Destructive: true},
-			{ID: optCancel, Label: "Cancel"},
-		}
 
 	case protected:
 		q.Title = fmt.Sprintf("You are on %s", p.Branch)
 		q.Body = "The agent commits directly to whatever branch is checked out."
-		q.DefaultOption = optBranch
-		q.Options = []Option{
-			{ID: optBranch, Label: "Create a branch", Hint: suggested, Recommended: true},
-			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint},
-			{ID: optHere, Label: "Continue on " + p.Branch, Destructive: true},
-			{ID: optCancel, Label: "Cancel"},
-		}
 
 	default:
 		// Nothing is unsafe here, but the run is still about to commit
 		// somewhere. Asking makes that a decision instead of a discovery.
 		q.Title = "Where should this run commit?"
 		q.Body = fmt.Sprintf(
-			"The agent commits as it goes. It can work on a new branch, in a "+
-				"separate worktree, or directly on %s.", branchLabel(p.Branch))
-		q.DefaultOption = optBranch
-		q.Options = []Option{
-			{ID: optBranch, Label: "Create a branch", Hint: suggested, Recommended: true},
-			{ID: optWorktree, Label: "Create a worktree", Hint: worktreeHint},
-			{ID: optHere, Label: "Continue on " + branchLabel(p.Branch)},
-			{ID: optCancel, Label: "Cancel"},
-		}
+			"The agent commits as it goes. It can work on a new branch — "+
+				"optionally in a separate worktree — or directly on %s.",
+			branchLabel(p.Branch))
 	}
 
+	q.Options = []Option{branch, here, cancel}
 	return q
+}
+
+// hereOption is the choice to run in the user's own checkout, worded and
+// flagged for how risky that is where they happen to be.
+func hereOption(p Project, cfg config.LoopConfig, othersInRoot bool) Option {
+	protected := p.Branch != "" && git.IsProtectedBranch(p.Branch)
+	here := Option{
+		ID:          optHere,
+		Label:       "Continue on " + branchLabel(p.Branch),
+		Destructive: protected || othersInRoot,
+	}
+	if othersInRoot {
+		here.Label = "Run here anyway"
+		here.Hint = "./"
+	}
+	if cfg.Git.RequireWorktree {
+		// Per-story branches switch the checkout between stories; with
+		// requireWorktree on the engine refuses that combination, so the UI
+		// should not offer it as a live button.
+		here.DisabledWhen = map[string]string{inputLayout: string(LayoutBranchPerStory)}
+	}
+	return here
+}
+
+// worktreeInput is the isolation half of the decision: the same branch, checked
+// out in a separate worktree instead of the user's own working tree.
+func worktreeInput(ask askContext, cfg config.LoopConfig, hint string) Input {
+	in := Input{
+		Key:      inputWorktree,
+		Label:    "In a separate worktree",
+		Checkbox: true,
+		Value:    strconv.FormatBool(ask.perStory() || ask.othersInRoot),
+		Hint:     hint,
+	}
+	if ask.layoutSettled && ask.perStory() && cfg.Git.RequireWorktree {
+		// The layout can no longer change, so neither can this: a settled
+		// per-story PRD has nothing to force it through a choice's Forces.
+		in.ReadOnly = true
+		in.Value = "true"
+	}
+	return in
 }
 
 // layoutInput is the layout half of the branch-safety decision.
@@ -241,8 +258,10 @@ func layoutInput(ask askContext, cfg config.LoopConfig) Input {
 	perStory := Choice{Value: string(LayoutBranchPerStory), Label: LayoutBranchPerStory.Label()}
 	if cfg.Git.RequireWorktree {
 		// Saying so here is the difference between a choice and a trap: the run
-		// is refused later if these two answers disagree.
+		// is refused later if these two answers disagree. Forces goes further
+		// and pins the toggle, so the disagreement cannot be expressed at all.
 		perStory.Hint = "needs a worktree"
+		perStory.Forces = map[string]string{inputWorktree: "true"}
 	}
 	in.Choices = []Choice{
 		{Value: string(LayoutOneBranch), Label: LayoutOneBranch.Label()},
@@ -294,7 +313,7 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 	if err != nil {
 		return "", err
 	}
-	if err := requireWorktreeFor(layout, cfg, answer.OptionID); err != nil {
+	if err := requireWorktreeFor(layout, cfg, answer); err != nil {
 		return "", err
 	}
 	// Recorded before anything is created, so what the branches mean is on disk
@@ -308,19 +327,21 @@ func (s *Session) prepareWorkspace(ctx context.Context, req StartRequest, runID 
 		branch = "chief/" + req.PRD
 	}
 
-	switch answer.OptionID {
-	case optHere:
+	if answer.OptionID == optHere {
 		return root, nil
-
-	case optBranch:
-		if err := s.ensureRunBranch(ctx, root, req.PRD, branch); err != nil {
-			return "", err
-		}
-		return root, nil
-
-	default: // worktree
+	}
+	if wantsWorktree(answer) {
 		return s.provisionWorktree(ctx, root, req.PRD, branch, cfg)
 	}
+	if err := s.ensureRunBranch(ctx, root, req.PRD, branch); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+// wantsWorktree reads the worktree toggle off an answer.
+func wantsWorktree(answer Answer) bool {
+	return answer.Inputs[inputWorktree] == "true"
 }
 
 // resolveLayout is the layout this run will use, given what was offered and what
@@ -349,17 +370,19 @@ func resolveLayout(prdName string, ask askContext, answer Answer) (BranchLayout,
 // Per-story branches switch the checkout between stories, so running them in the
 // user's own working tree would move it under them mid-run. requireWorktree is on
 // by default for exactly that reason, and refusing here — with the reason — is
-// better than starting a run that would do it anyway.
-func requireWorktreeFor(layout BranchLayout, cfg config.LoopConfig, optionID string) error {
+// better than starting a run that would do it anyway. The dialog already pins
+// the toggle and disables "continue here" for this combination; this is the
+// engine's own guarantee for callers that bypass the dialog.
+func requireWorktreeFor(layout BranchLayout, cfg config.LoopConfig, answer Answer) error {
 	if layout != LayoutBranchPerStory || !cfg.Git.RequireWorktree {
 		return nil
 	}
-	if optionID == optWorktree {
+	if answer.OptionID != optHere && wantsWorktree(answer) {
 		return nil
 	}
 	return fmt.Errorf(
 		"%q needs a worktree: each story switches branch, which would move this checkout under you. "+
-			"Start again and choose to create a worktree", layout.Label())
+			"Start again with the worktree toggle on", layout.Label())
 }
 
 // provisionWorktree creates the worktree and runs the configured setup command,

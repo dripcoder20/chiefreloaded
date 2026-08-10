@@ -38,8 +38,8 @@ func TestAlwaysAsksWhereToCommit(t *testing.T) {
 	}
 }
 
-// Both ways of isolating a run must be offered wherever the question appears;
-// previously "create a branch" was only available on a protected branch.
+// Both ways of isolating a run must be offered wherever the question appears:
+// a branch as an option, and the worktree as a toggle qualifying it.
 func TestEveryCaseOffersBranchAndWorktree(t *testing.T) {
 	cases := map[string]struct {
 		project Project
@@ -61,23 +61,45 @@ func TestEveryCaseOffersBranchAndWorktree(t *testing.T) {
 			for _, o := range q.Options {
 				offered[o.ID] = true
 			}
-			for _, want := range []string{optBranch, optWorktree, optCancel} {
+			for _, want := range []string{optBranch, optCancel} {
 				if !offered[want] {
 					t.Errorf("%s is not offered (got %v)", want, offered)
 				}
 			}
+			wt := worktreeInputOf(t, q)
+			if !wt.Checkbox {
+				t.Error("the worktree field should render as a toggle")
+			}
 		})
 	}
+}
+
+// worktreeInputOf finds the worktree toggle on a question, failing if absent.
+func worktreeInputOf(t *testing.T, q *Question) Input {
+	t.Helper()
+	for _, in := range q.Inputs {
+		if in.Key == inputWorktree {
+			return in
+		}
+	}
+	t.Fatalf("no worktree field on %q (inputs %+v)", q.Title, q.Inputs)
+	return Input{}
 }
 
 // The branch name is editable, and pre-filled with something sensible.
 func TestTheSuggestedBranchNameIsOffered(t *testing.T) {
 	p := Project{IsGitRepo: true, Branch: "feature/x"}
 	q := branchSafetyQuestion(p, *config.DefaultLoop(), "checkout", askContext{})
-	if len(q.Inputs) != 1 || q.Inputs[0].Key != "branch" {
+	var branch *Input
+	for i := range q.Inputs {
+		if q.Inputs[i].Key == inputBranch {
+			branch = &q.Inputs[i]
+		}
+	}
+	if branch == nil {
 		t.Fatalf("expected an editable branch input, got %+v", q.Inputs)
 	}
-	if q.Inputs[0].Value == "" {
+	if branch.Value == "" {
 		t.Error("the branch name should be pre-filled")
 	}
 }
@@ -118,8 +140,8 @@ func TestSecondRunInTheSameDirectoryAsks(t *testing.T) {
 	if q == nil {
 		t.Fatal("no question raised with another PRD already running here")
 	}
-	if q.DefaultOption != optWorktree {
-		t.Errorf("default = %q, want a worktree", q.DefaultOption)
+	if got := worktreeInputOf(t, q).Value; got != "true" {
+		t.Errorf("worktree toggle = %q, want it pre-checked", got)
 	}
 }
 
@@ -132,19 +154,39 @@ func TestPerStoryAlwaysAsksEvenOnAFeatureBranch(t *testing.T) {
 	if q == nil {
 		t.Fatal("per-story mode must not start in the working checkout without asking")
 	}
-	if q.DefaultOption != optWorktree {
-		t.Errorf("default = %q, want a worktree", q.DefaultOption)
+	if got := worktreeInputOf(t, q).Value; got != "true" {
+		t.Errorf("worktree toggle = %q, want it pre-checked for per-story", got)
 	}
 }
 
-// With requireWorktree on — the default — there is no way to say "run here".
+// With requireWorktree on — the default — "run here" is dead while per-story is
+// selected, and the per-story choice pins the worktree toggle on. Both rules
+// ride on the question as data, so the dialog stays truthful when the user
+// flips the layout instead of being built for one layout and going stale.
 func TestPerStoryOffersNoEscapeHatchByDefault(t *testing.T) {
 	p := Project{IsGitRepo: true, Branch: "feature/checkout"}
 	q := branchSafetyQuestion(p, perStoryConfig(), "checkout", askContext{layout: LayoutBranchPerStory, layoutOffered: true})
 
-	for _, o := range q.Options {
-		if o.ID == optHere {
-			t.Error("requireWorktree is on, so running in the checkout must not be offered")
+	var here *Option
+	for i := range q.Options {
+		if q.Options[i].ID == optHere {
+			here = &q.Options[i]
+		}
+	}
+	if here == nil {
+		t.Fatal("running here should be present, disabled by the layout selection")
+	}
+	if here.DisabledWhen[inputLayout] != string(LayoutBranchPerStory) {
+		t.Errorf("here.DisabledWhen = %v, want it dead while per-story is selected", here.DisabledWhen)
+	}
+
+	layout := layoutInputOf(t, q)
+	for _, c := range layout.Choices {
+		if c.Value != string(LayoutBranchPerStory) {
+			continue
+		}
+		if c.Forces[inputWorktree] != "true" {
+			t.Errorf("per-story choice forces %v, want the worktree toggle pinned on", c.Forces)
 		}
 	}
 }
@@ -159,8 +201,8 @@ func TestPerStoryOffersTheEscapeHatchWhenConfigured(t *testing.T) {
 	for _, o := range q.Options {
 		if o.ID == optHere {
 			found = true
-			if !o.Destructive {
-				t.Error("overriding requireWorktree should still be marked destructive")
+			if len(o.DisabledWhen) != 0 {
+				t.Errorf("with requireWorktree off the override must stay live, got DisabledWhen %v", o.DisabledWhen)
 			}
 		}
 	}
@@ -169,6 +211,38 @@ func TestPerStoryOffersTheEscapeHatchWhenConfigured(t *testing.T) {
 	}
 	if q.DefaultOption == optHere {
 		t.Error("the override must never be the default")
+	}
+}
+
+// Auto-answering must mean the same thing as accepting the default untouched: a
+// per-story question arrives with the worktree toggle on, so the seeded answer
+// has to carry it or headless runs would be refused by requireWorktreeFor.
+func TestAutoAnswerCarriesTheSeededWorktreeToggle(t *testing.T) {
+	cfg := perStoryConfig()
+	q := branchSafetyQuestion(Project{IsGitRepo: true, Branch: "feature/x"}, cfg, "checkout",
+		askContext{layout: LayoutBranchPerStory, layoutOffered: true})
+
+	answer := Answer{OptionID: q.DefaultOption, Inputs: seededInputs(*q)}
+	if !wantsWorktree(answer) {
+		t.Error("the seeded answer should carry the pre-checked worktree toggle")
+	}
+	if err := requireWorktreeFor(LayoutBranchPerStory, cfg, answer); err != nil {
+		t.Errorf("the seeded answer must satisfy the worktree requirement: %v", err)
+	}
+}
+
+// A settled per-story layout cannot be flipped away, so nothing can force the
+// toggle through a choice — the question locks it directly instead.
+func TestSettledPerStoryLocksTheWorktreeToggle(t *testing.T) {
+	ask := askContext{layout: LayoutBranchPerStory, layoutOffered: true, layoutSettled: true}
+	q := branchSafetyQuestion(Project{IsGitRepo: true, Branch: "feature/x"}, perStoryConfig(), "checkout", ask)
+
+	wt := worktreeInputOf(t, q)
+	if !wt.ReadOnly {
+		t.Error("the worktree toggle should be locked for a settled per-story PRD")
+	}
+	if wt.Value != "true" {
+		t.Errorf("locked toggle = %q, want on", wt.Value)
 	}
 }
 

@@ -7,6 +7,13 @@
 > few details were revised on contact with reality (notably `gh pr edit`, which
 > does not work on gh 2.68 — see `internal/ghstack/ghstack.go`). For what is
 > actually built, read [AGENTS.md](../AGENTS.md) and the code.
+>
+> **§3, and point 2 of the Context list below, are the largest revision.** Runs
+> no longer push or open pull requests at all: a run only commits, and
+> publishing — one pull request for the PRD, or one per story — is an action the
+> user takes afterwards. Read them for why stacked branches are shaped the way
+> they are, and
+> [workflows.md](workflows.md#publishing) for what actually happens today.
 
 ## Context
 

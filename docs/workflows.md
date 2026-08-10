@@ -175,13 +175,27 @@ record of finished executions.
 
 ## Implementation workflow
 
+### What a run does, and what it does not
+
+A run commits. That is all it does to git: it creates branches locally and
+writes one commit per story onto them.
+
+**A run pushes nothing and opens no pull request.** No branch reaches the
+remote, and `gh` is never invoked, however the run is configured. Turning a
+PRD's commits into pull requests is a separate action you take afterwards — see
+[Publishing](#publishing) below.
+
 ### Branch layout
 
 How a run arranges its commits is chosen when the run starts, on the same
 question that asks where it should commit: **One branch for the whole PRD**
-(preselected) or **A branch per story**. The choice is recorded for the PRD and
-preselected next time. Once a story has committed the layout is settled and is
-reported rather than offered — the commits and the record would otherwise
+(preselected — this is the default) or **A branch per story**. The choice is
+recorded for the PRD and preselected next time.
+
+The layout can be changed on every start until the PRD's first story commits.
+After that it is settled: the question reports it rather than offering it, for
+the rest of that PRD's life. Commits that already exist cannot be rearranged
+into the other layout, so the alternative would be a record and a history that
 disagree.
 
 A run in a directory that is not a git repository, or with `git.mode: off`,
@@ -248,6 +262,90 @@ the earlier error rather than leaving it on screen next to a running loop.
 
 ---
 
+## Publishing
+
+Publishing is what pushes a PRD's branches and opens its pull requests. It is
+an explicit action, taken when you decide the work is ready — never a side
+effect of a run.
+
+### The control
+
+A **Pull request** button in the PRD header, opening a menu.
+
+It is **absent rather than disabled** wherever publishing cannot work. A
+disabled control invites you to work out what would enable it; an absent one
+says the same thing without the puzzle. It is missing when:
+
+- the project is not a git repository,
+- `git.mode` is `off`, so Loop created no branches,
+- no story of the PRD has committed yet, or
+- a run for that PRD is still live.
+
+### The items
+
+Which items the menu offers depends on the layout the run used.
+
+| Layout | Items |
+|---|---|
+| One branch for the whole PRD | Create pull request · Create draft pull request |
+| A branch per story | those two, plus Create stacked pull requests · Create draft stacked pull requests |
+
+Draft or not is a menu item rather than a checkbox beside a button: whether the
+work is ready for review is the decision being made, not a modifier on a
+different one.
+
+Under a one-branch layout the two stacked items are replaced by the reason —
+*"this run put every story on one branch, so there is no stack to publish."*
+The whole control is present and one of its items is missing, which is worth a
+sentence rather than leaving you to work out why your menu is shorter than
+someone else's.
+
+**One pull request** pushes the branch holding the PRD's work and opens a
+single pull request against the trunk. Its description is the PRD's, then the
+list of stories, then each story's own description as it was composed when that
+story was verified. Pressing again when the pull request already exists updates
+that one rather than opening a second.
+
+**A stack** opens one pull request per story, from the bottom upwards, each
+based on the branch below it and the bottom one on the trunk. A story that
+committed nothing, or that has no branch recorded, contributes no pull request
+and is reported with that reason. Each layer's base is the nearest branch below
+it that has a commit, so an empty story in the middle does not leave a gap.
+
+The result appears beside the control: for a single pull request its link, and
+for a stack one row per story carrying either the link or the reason there is
+none.
+
+### When part of a stack fails
+
+A stack is published one layer at a time and is not atomic. If a layer fails —
+GitHub unreachable, a rejected push, a `gh` error — the pass stops there, and
+the pull requests already opened stay open. Nothing is rolled back.
+
+The report says per story what exists and what does not:
+
+- the stories below the failure, with their links;
+- the story that failed, with its error;
+- the stories above it, marked skipped because their base never reached the
+  remote. GitHub answers a missing base by targeting the trunk, which would
+  present every story below as this one's work.
+
+The failure is also shown as an error, but the per-story list is what you act
+on.
+
+**Finishing it is pressing the control again.** Each story is asked about
+before anything is created, so a retry attempts only what is missing: a story
+that already has a pull request is reported *already open* and left entirely
+alone — nothing is pushed for it, and a description you edited on GitHub
+survives — while the story that failed is retried and the ones above it
+continue. A retry with nothing left to do opens no duplicates.
+
+The single-pull-request item behaves differently on a second press: it updates
+the existing pull request. One pull request for a whole PRD is a different
+action, and pressing it again is a refresh rather than a retry.
+
+---
+
 ## Driving it headlessly
 
 `cmd/loopctl` exposes the same engine without a window, which is what the
@@ -257,5 +355,14 @@ end-to-end tests use:
 loopctl workflow <prd> -json
 ```
 
-Reports a PRD's saved settings and the agent that would actually implement it,
+Reports a PRD's saved settings, the recorded branch layout, the branches a run
+created in stack order, and the agent that would actually implement it —
 including the error when a saved agent has been uninstalled.
+
+```bash
+loopctl publish <prd> [-draft] [-stack] [-json]
+```
+
+The same publishing action without a window. `-stack` opens one pull request
+per story instead of one for the PRD, and prints the per-story table whether or
+not the pass succeeded, so a partial failure is as readable here as in the GUI.

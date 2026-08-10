@@ -2,7 +2,8 @@
 
 Loop is a Wails v3 desktop GUI for [chief](https://github.com/MiniCodeMonkey/chief):
 it loops a coding-agent CLI over the user stories in a markdown PRD, one commit
-per story, and opens a stacked draft PR for each one.
+per story, then publishes the result as a pull request — one for the PRD, or a
+stack of one per story — when the user asks for it. A run itself pushes nothing.
 
 Go 1.24 backend, Svelte 5 (runes) + TypeScript frontend, module
 `github.com/dripcoder/loop`.
