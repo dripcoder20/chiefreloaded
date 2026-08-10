@@ -55,3 +55,66 @@ directory name must end in `.iconset`.
 macOS-only: both `sips` and `iconutil` are macOS tools, so the `.icns` cannot be
 regenerated on Linux or Windows. Because it is committed, a regeneration must be
 committed too.
+
+## Verifying the icon in a real build
+
+Checking the committed artwork is not enough — what ships is whatever the
+packaging tasks copy into the bundle. Verify per target:
+
+**macOS.** `task package` copies `build/darwin/icons.icns` and
+`build/darwin/Assets.car` into `bin/loop.app/Contents/Resources` verbatim, so a
+checksum comparison is the whole test:
+
+```bash
+shasum -a 256 bin/loop.app/Contents/Resources/{icons.icns,Assets.car}
+git show HEAD:build/darwin/icons.icns | shasum -a 256
+git show HEAD:build/darwin/Assets.car | shasum -a 256
+```
+
+`task run` builds `bin/loop.dev.app` the same way from the same two files, so it
+carries the same icon.
+
+To see what macOS will actually draw — rather than what is on disk — ask
+LaunchServices via `NSWorkspace.icon(forFile:)` for the Finder icon and
+`NSRunningApplication.icon` for the dock icon of a running instance. Both resolve
+through the same caches the user sees.
+
+**Windows.** With no Windows host, cross-build the resource object on macOS and
+confirm every frame of the `.ico` is embedded byte-for-byte:
+
+```bash
+cd build && wails3 generate syso -arch amd64 -icon windows/icon.ico \
+  -manifest windows/wails.exe.manifest -info windows/info.json \
+  -out /tmp/wails_windows_amd64.syso
+```
+
+**Linux.** There is nothing generated to check. Both consumers copy
+`build/appicon.png` directly — `build/linux/nfpm/nfpm.yaml` installs it to
+`/usr/share/icons/hicolor/128x128/apps/loop.png`, and `create:appimage` in
+`build/linux/Taskfile.yml` copies it next to the binary. Verifying the Linux path
+means confirming `build/appicon.png` is the intended artwork and that those two
+references still point at it.
+
+### `Assets.car` is not byte-reproducible
+
+`actool` stamps a build timestamp and a fresh UUID into every rendition filename,
+so two runs of `task common:generate:icons` over identical inputs produce
+`Assets.car` files with **different checksums at identical size**. A diff shows a
+few hundred differing bytes in a multi-megabyte file.
+
+This means a rebuild dirties `build/darwin/Assets.car` in `git status` even when
+nothing changed. Do not commit that churn, and do not read it as a regression.
+Compare the catalogs semantically instead:
+
+```bash
+assetutil --info build/darwin/Assets.car
+```
+
+The renditions, sizes, layers and appearances must match; only `Timestamp` and
+the UUID embedded in each `RenditionName` may differ. `build/darwin/icons.icns`
+and `build/windows/icon.ico` *are* reproducible, so they can be compared by
+checksum as usual.
+
+Because `Assets.car` is regenerated on every `task package`, checksum the bundle
+against the **working tree** file it was built from, then separately confirm the
+working tree is semantically equal to `HEAD`.
