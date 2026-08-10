@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { STORAGE_KEY } from "./celebration.svelte";
 
+const fireConfetti = vi.hoisted(() => vi.fn());
+vi.mock("../lib/confetti", () => ({ fireConfetti: () => fireConfetti() }));
+
 /**
  * The preference is read once, when the module is first imported, so every test
  * that cares about a *stored* value has to seed localStorage and then load a
@@ -12,7 +15,10 @@ async function loadFresh() {
   return await import("./celebration.svelte");
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  fireConfetti.mockClear();
+});
 
 describe("the celebrate-on-publish preference", () => {
   it("is on when nothing has been stored", async () => {
@@ -90,5 +96,33 @@ describe("the celebrate-on-publish preference", () => {
     expect(celebration.isCelebrationEnabled).toBe(false);
 
     setItem.mockRestore();
+  });
+});
+
+describe("celebrating a publish", () => {
+  it("fires once per call while the preference is on", async () => {
+    const { celebratePublish } = await loadFresh();
+    celebratePublish();
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet while the preference is off", async () => {
+    const { celebration, celebratePublish } = await loadFresh();
+    celebration.isCelebrationEnabled = false;
+    celebratePublish();
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The preference is read at the moment of firing, not captured when the
+  // publish started, so turning it off mid-publish takes effect.
+  it("obeys a preference changed since the last celebration", async () => {
+    const { celebration, celebratePublish } = await loadFresh();
+    celebratePublish();
+    celebration.isCelebrationEnabled = false;
+    celebratePublish();
+    celebration.isCelebrationEnabled = true;
+    celebratePublish();
+
+    expect(fireConfetti).toHaveBeenCalledTimes(2);
   });
 });

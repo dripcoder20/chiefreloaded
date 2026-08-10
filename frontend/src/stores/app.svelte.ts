@@ -25,6 +25,7 @@ import {
   type RunSnapshot,
 } from "../platform";
 import { ingest } from "./logs.svelte";
+import { celebratePublish } from "./celebration.svelte";
 import { errorMessage } from "./errors";
 
 /**
@@ -784,7 +785,11 @@ export async function publishPullRequest(draft: boolean): Promise<void> {
   app.publishing = true;
   app.error = null;
   try {
-    app.published = await api.prd.publish({ prd, draft } as never);
+    const report = await api.prd.publish({ prd, draft } as never);
+    app.published = report;
+    // A report without a pull request is a push that got no further, and there
+    // is nothing to celebrate until one exists.
+    if (report.pr) celebratePublish();
     // The pull request is now cached against the branch, so the links the story
     // list and the header show come back with it.
     await reloadPrds();

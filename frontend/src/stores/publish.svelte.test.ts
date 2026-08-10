@@ -33,7 +33,11 @@ vi.mock("../platform", async () => {
   };
 });
 
+const fireConfetti = vi.hoisted(() => vi.fn());
+vi.mock("../lib/confetti", () => ({ fireConfetti: () => fireConfetti() }));
+
 import { app, publishPullRequest, publishStack, reloadPublishOffer } from "./app.svelte";
+import { celebration } from "./celebration.svelte";
 
 const REPORT = {
   prd: "checkout",
@@ -70,6 +74,7 @@ beforeEach(() => {
   backend.get.mockResolvedValue({ name: "checkout", stories: [] });
   backend.publish.mockResolvedValue(REPORT);
   backend.publishStack.mockResolvedValue(STACK_REPORT);
+  celebration.isCelebrationEnabled = true;
 });
 
 describe("whether the control appears", () => {
@@ -143,6 +148,58 @@ describe("publishing", () => {
 
     expect(app.error).toContain("Stop or finish the run before publishing");
     expect(app.publishing).toBe(false);
+  });
+});
+
+describe("celebrating a published pull request", () => {
+  it("fires exactly once when the pull request is opened", async () => {
+    await publishPullRequest(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire when publishing is refused", async () => {
+    backend.publish.mockRejectedValue(new Error("main is running"));
+    await publishPullRequest(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // A report can come back describing a push that never became a pull request.
+  it("does not fire for a report with no pull request in it", async () => {
+    backend.publish.mockResolvedValue({ ...REPORT, pr: undefined });
+    await publishPullRequest(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The result is state: it is read again whenever the view redraws. Only the
+  // act of publishing may celebrate, or a window resize would too.
+  it("does not fire when the kept result is read again", async () => {
+    await publishPullRequest(false);
+    fireConfetti.mockClear();
+
+    const kept = app.published;
+    app.published = kept;
+    expect(app.published?.pr?.number).toBe(128);
+    expect(app.published?.pr?.number).toBe(128);
+
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  it("does not fire while the preference is off", async () => {
+    celebration.isCelebrationEnabled = false;
+    await publishPullRequest(false);
+
+    expect(app.published?.pr?.number).toBe(128);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The second press updates the existing pull request, which is as much a
+  // publish as the first — and still one celebration, not two.
+  it("fires once more when the pull request is updated by a second press", async () => {
+    await publishPullRequest(false);
+    backend.publish.mockResolvedValue({ ...REPORT, updated: true });
+    await publishPullRequest(false);
+
+    expect(fireConfetti).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -16,6 +16,8 @@
  * TypeScript (and from tests) as well as from components.
  */
 
+import { fireConfetti } from "../lib/confetti";
+
 /** The single key this preference occupies, namespaced as LogPanel's is. */
 export const STORAGE_KEY = "loop.celebrateOnPublish";
 
@@ -67,4 +69,20 @@ export const celebration = new CelebrationPreference();
 /** Flip the preference. The Settings switch binds through this. */
 export function toggleCelebration(): void {
   celebration.isCelebrationEnabled = !celebration.isCelebrationEnabled;
+}
+
+/**
+ * Celebrate a pull request that has just been published, if the user wants it.
+ *
+ * Call this from the code path that *did* the publishing, never from one that
+ * renders its result: a result is state, and state is read again on every
+ * re-render, which would make the confetti fire when the window is resized or a
+ * neighbouring value changes. Publishing is an event, and happens once.
+ *
+ * The preference is read here rather than passed in, so a toggle made while a
+ * publish is in flight is the one that decides.
+ */
+export function celebratePublish(): void {
+  if (!celebration.isCelebrationEnabled) return;
+  fireConfetti();
 }
