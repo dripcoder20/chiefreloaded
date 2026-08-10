@@ -20,7 +20,11 @@ function branchSafetyQuestion(overrides: Record<string, unknown> = {}) {
     defaultOption: "branch",
     options: [
       { id: "branch", label: "Create a branch", recommended: true },
-      { id: "worktree", label: "Create a worktree" },
+      {
+        id: "here",
+        label: "Continue on feature/x",
+        disabledWhen: { layout: "branch-per-story" },
+      },
       { id: "cancel", label: "Cancel" },
     ],
     inputs: [
@@ -31,9 +35,14 @@ function branchSafetyQuestion(overrides: Record<string, unknown> = {}) {
         value: "one-branch",
         choices: [
           { value: "one-branch", label: "One branch for the whole PRD" },
-          { value: "branch-per-story", label: "A branch per story" },
+          {
+            value: "branch-per-story",
+            label: "A branch per story",
+            forces: { worktree: "true" },
+          },
         ],
       },
+      { key: "worktree", label: "In a separate worktree", value: "false", checkbox: true },
     ],
     ...overrides,
   } as never;
@@ -62,19 +71,65 @@ describe("the question prompt", () => {
     expect(store.answerQuestion).toHaveBeenCalledWith("q_1", "branch", {
       branch: "chief/checkout",
       layout: "one-branch",
+      worktree: "false",
     });
   });
 
-  it("submits the layout the user picked", async () => {
+  it("submits the worktree toggle the user switched on", async () => {
+    const view = render(QuestionPrompt, { props: { question: branchSafetyQuestion() } });
+
+    await fireEvent.click(view.getByLabelText("In a separate worktree"));
+    await fireEvent.click(view.getByRole("button", { name: "Create a branch" }));
+
+    expect(store.answerQuestion).toHaveBeenCalledWith("q_1", "branch", {
+      branch: "chief/checkout",
+      layout: "one-branch",
+      worktree: "true",
+    });
+  });
+
+  // Per-story branches switch the checkout between stories, so the engine marks
+  // that choice as forcing the worktree toggle. The dialog has to honour the
+  // pin — and let go of it — as the selection changes.
+  it("pins the worktree toggle while a forcing layout is selected", async () => {
     const view = render(QuestionPrompt, { props: { question: branchSafetyQuestion() } });
 
     await fireEvent.click(view.getByLabelText("A branch per story"));
-    await fireEvent.click(view.getByRole("button", { name: "Create a worktree" }));
 
-    expect(store.answerQuestion).toHaveBeenCalledWith("q_1", "worktree", {
+    const toggle = view.getByLabelText("In a separate worktree") as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(true);
+
+    await fireEvent.click(view.getByRole("button", { name: "Create a branch" }));
+    expect(store.answerQuestion).toHaveBeenCalledWith("q_1", "branch", {
       branch: "chief/checkout",
       layout: "branch-per-story",
+      worktree: "true",
     });
+  });
+
+  it("releases the pinned toggle when the layout changes back", async () => {
+    const view = render(QuestionPrompt, { props: { question: branchSafetyQuestion() } });
+
+    await fireEvent.click(view.getByLabelText("A branch per story"));
+    await fireEvent.click(view.getByLabelText("One branch for the whole PRD"));
+
+    const toggle = view.getByLabelText("In a separate worktree") as HTMLInputElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.checked).toBe(false);
+  });
+
+  it("disables an option while its disabledWhen rule matches", async () => {
+    const view = render(QuestionPrompt, { props: { question: branchSafetyQuestion() } });
+
+    const here = view.getByRole("button", { name: "Continue on feature/x" }) as HTMLButtonElement;
+    expect(here.disabled).toBe(false);
+
+    await fireEvent.click(view.getByLabelText("A branch per story"));
+    expect(here.disabled).toBe(true);
+
+    await fireEvent.click(view.getByLabelText("One branch for the whole PRD"));
+    expect(here.disabled).toBe(false);
   });
 
   // A layout with commits behind it is reported, not offered: there is nothing

@@ -10,14 +10,45 @@
    * many. So everything here belongs to a single answer: choosing an option
    * submits the fields alongside it.
    *
-   * A field with choices is a selection, a field without is free text, and a
-   * read-only field is a decision already made — shown rather than offered,
-   * which is why it is not simply a disabled control.
+   * A field with choices is a selection, a field with `checkbox` is a toggle, a
+   * field without either is free text, and a read-only field is a decision
+   * already made — shown rather than offered, which is why it is not simply a
+   * disabled control.
+   *
+   * A selected choice may pin other fields through `forces`, and an option may
+   * be dead under certain field values through `disabledWhen`. Both rules come
+   * from the engine as data, so the dialog stays truthful as selections change
+   * instead of being rebuilt for one of them.
    */
   let { question }: { question: Question } = $props();
 
+  type QuestionOption = NonNullable<Question["options"]>[number];
+
   let values = $state<Record<string, string>>({});
   const fields = $derived(question.inputs ?? []);
+
+  // Values pinned by the currently selected choices, e.g. per-story layout
+  // forcing the worktree toggle on.
+  const forced = $derived.by(() => {
+    const pinned: Record<string, string> = {};
+    for (const field of fields) {
+      const selected = (field.choices ?? []).find((c) => c.value === values[field.key]);
+      if (!selected?.forces) continue;
+      for (const [key, value] of Object.entries(selected.forces)) {
+        if (value !== undefined) pinned[key] = value;
+      }
+    }
+    return pinned;
+  });
+
+  // What the answer will actually carry: typed values, overridden by pins.
+  const effective = $derived({ ...values, ...forced });
+
+  function isDisabled(option: QuestionOption): boolean {
+    const rule = option.disabledWhen;
+    if (!rule) return false;
+    return Object.entries(rule).every(([key, value]) => effective[key] === value);
+  }
 
   // Non-reactive on purpose: it guards the seeding below, and making it state
   // would re-run that effect as it wrote.
@@ -35,7 +66,7 @@
   });
 
   function choose(optionId: string): void {
-    void answerQuestion(question.id, optionId, { ...values });
+    void answerQuestion(question.id, optionId, { ...effective });
   }
 </script>
 
@@ -54,6 +85,17 @@
             <span class="field-label">{field.label}</span>
             <span class="settled">{field.hint || field.value}</span>
           </div>
+        {:else if field.checkbox}
+          <label class="field">
+            <input
+              type="checkbox"
+              checked={effective[field.key] === "true"}
+              disabled={field.key in forced}
+              onchange={(e) => (values[field.key] = e.currentTarget.checked ? "true" : "false")}
+            />
+            <span class="field-label">{field.label}</span>
+            {#if field.hint}<span class="hint">{field.hint}</span>{/if}
+          </label>
         {:else if field.choices && field.choices.length > 0}
           <fieldset class="field">
             <legend class="field-label">{field.label}</legend>
@@ -91,6 +133,7 @@
       <button
         class:recommended={option.recommended}
         class:destructive={option.destructive}
+        disabled={isDisabled(option)}
         onclick={() => choose(option.id)}
         title={option.hint}
       >
@@ -159,5 +202,9 @@
   .options .destructive {
     border-color: var(--danger);
     color: var(--danger);
+  }
+  .options button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 </style>

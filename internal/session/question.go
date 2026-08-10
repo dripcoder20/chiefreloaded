@@ -129,7 +129,21 @@ func (s *Session) autoAnswering() bool {
 // recommended option immediately.
 func (s *Session) askOrDefault(ctx context.Context, q Question) (Answer, error) {
 	if s.autoAnswering() {
-		return Answer{OptionID: q.DefaultOption}, nil
+		return Answer{OptionID: q.DefaultOption, Inputs: seededInputs(q)}, nil
 	}
 	return s.ask(ctx, q)
+}
+
+// seededInputs carries each field's preselected value, so auto-answering means
+// the same thing as accepting the default without touching anything — including
+// the worktree toggle a per-story run arrives with switched on.
+func seededInputs(q Question) map[string]string {
+	if len(q.Inputs) == 0 {
+		return nil
+	}
+	inputs := make(map[string]string, len(q.Inputs))
+	for _, in := range q.Inputs {
+		inputs[in.Key] = in.Value
+	}
+	return inputs
 }
