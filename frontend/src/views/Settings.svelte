@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Settings } from "../platform";
   import { app } from "../stores/app.svelte";
+  import { celebration } from "../stores/celebration.svelte";
   import { errorMessage } from "../stores/errors";
   import PromptEditor from "./PromptEditor.svelte";
 
@@ -240,6 +241,22 @@
       </p>
     {/if}
   {/if}
+
+    <!-- Outside the project gate on purpose: this is a preference of the person
+         at the screen, not of the project, so it is answerable with no project
+         open and it never reaches saveConfig. -->
+    <section>
+      <h3>Celebration</h3>
+      <label class="row">
+        <span class="label">Confetti on publish</span>
+        <input type="checkbox" bind:checked={celebration.isCelebrationEnabled} />
+      </label>
+      <p class="note">
+        A short burst when a pull request or a whole stack finishes publishing. Remembered
+        in this browser only — it is not written to .chief/config.yaml, so turning it off
+        does not turn it off for anyone else working on the project.
+      </p>
+    </section>
   </div>
 </div>
 

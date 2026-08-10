@@ -33,7 +33,11 @@ vi.mock("../platform", async () => {
   };
 });
 
+const fireConfetti = vi.hoisted(() => vi.fn());
+vi.mock("../lib/confetti", () => ({ fireConfetti: () => fireConfetti() }));
+
 import { app, publishPullRequest, publishStack, reloadPublishOffer } from "./app.svelte";
+import { celebration } from "./celebration.svelte";
 
 const REPORT = {
   prd: "checkout",
@@ -70,6 +74,7 @@ beforeEach(() => {
   backend.get.mockResolvedValue({ name: "checkout", stories: [] });
   backend.publish.mockResolvedValue(REPORT);
   backend.publishStack.mockResolvedValue(STACK_REPORT);
+  celebration.isCelebrationEnabled = true;
 });
 
 describe("whether the control appears", () => {
@@ -143,6 +148,58 @@ describe("publishing", () => {
 
     expect(app.error).toContain("Stop or finish the run before publishing");
     expect(app.publishing).toBe(false);
+  });
+});
+
+describe("celebrating a published pull request", () => {
+  it("fires exactly once when the pull request is opened", async () => {
+    await publishPullRequest(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire when publishing is refused", async () => {
+    backend.publish.mockRejectedValue(new Error("main is running"));
+    await publishPullRequest(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // A report can come back describing a push that never became a pull request.
+  it("does not fire for a report with no pull request in it", async () => {
+    backend.publish.mockResolvedValue({ ...REPORT, pr: undefined });
+    await publishPullRequest(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The result is state: it is read again whenever the view redraws. Only the
+  // act of publishing may celebrate, or a window resize would too.
+  it("does not fire when the kept result is read again", async () => {
+    await publishPullRequest(false);
+    fireConfetti.mockClear();
+
+    const kept = app.published;
+    app.published = kept;
+    expect(app.published?.pr?.number).toBe(128);
+    expect(app.published?.pr?.number).toBe(128);
+
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  it("does not fire while the preference is off", async () => {
+    celebration.isCelebrationEnabled = false;
+    await publishPullRequest(false);
+
+    expect(app.published?.pr?.number).toBe(128);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The second press updates the existing pull request, which is as much a
+  // publish as the first — and still one celebration, not two.
+  it("fires once more when the pull request is updated by a second press", async () => {
+    await publishPullRequest(false);
+    backend.publish.mockResolvedValue({ ...REPORT, updated: true });
+    await publishPullRequest(false);
+
+    expect(fireConfetti).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -229,6 +286,104 @@ describe("publishing a stack", () => {
     expect(app.error).toBeNull();
     expect(app.publishedStack?.stories?.[0]?.alreadyOpen).toBe(true);
     expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+  });
+
+  it("celebrates a stack in which every layer landed", async () => {
+    await publishStack(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  // Three pull requests out of four is the case confetti would misrepresent.
+  it("does not celebrate a stack that failed half way, however much of it landed", async () => {
+    backend.publishStack.mockResolvedValue({
+      prd: "checkout",
+      failed: "US-002: gh pr create: could not reach github.com",
+      stories: [
+        STACK_REPORT.stories[0],
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          error: "gh pr create: could not reach github.com",
+        },
+      ],
+    });
+
+    await publishStack(false);
+
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The whole point of the transition rule: the failed press is silent, the retry
+  // that finishes the stack celebrates, and pressing again after that is silent
+  // because there is nothing new to celebrate.
+  it("celebrates exactly once across a failure, a retry, and a redundant press", async () => {
+    const failedFirstPass = {
+      prd: "checkout",
+      failed: "US-002: gh pr create: could not reach github.com",
+      stories: [
+        STACK_REPORT.stories[0],
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          error: "gh pr create: could not reach github.com",
+        },
+      ],
+    };
+    const completedRetry = {
+      prd: "checkout",
+      stories: [
+        { ...STACK_REPORT.stories[0], alreadyOpen: true },
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          pr: { number: 129, url: "https://github.com/acme/checkout/pull/129", state: "OPEN" },
+        },
+      ],
+    };
+    const nothingLeftToDo = {
+      prd: "checkout",
+      stories: completedRetry.stories.map((story) => ({ ...story, alreadyOpen: true })),
+    };
+
+    backend.publishStack.mockResolvedValueOnce(failedFirstPass);
+    await publishStack(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+
+    backend.publishStack.mockResolvedValueOnce(completedRetry);
+    await publishStack(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+
+    backend.publishStack.mockResolvedValueOnce(nothingLeftToDo);
+    await publishStack(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not celebrate a stack while the preference is off", async () => {
+    celebration.isCelebrationEnabled = false;
+    await publishStack(false);
+
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The kept report is state, read again on every redraw; only the press may celebrate.
+  it("does not celebrate again when the kept stack report is read again", async () => {
+    await publishStack(false);
+    fireConfetti.mockClear();
+
+    const kept = app.publishedStack;
+    app.publishedStack = kept;
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  it("does not celebrate when the stacked publish is refused outright", async () => {
+    backend.publishStack.mockRejectedValue(new Error("there is no stack to publish"));
+    await publishStack(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
   });
 
   it("reports a refusal rather than pretending a stack was published", async () => {

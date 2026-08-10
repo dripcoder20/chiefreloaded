@@ -13,6 +13,13 @@ window, adding two things a TUI can't do:
   with a draft PR the moment it completes — built on
   [GitHub's stacked pull requests](https://github.blog/changelog/2026-07-30-stacked-pull-requests-are-now-in-public-preview/).
 
+Publishing is celebrated: opening a pull request — or completing a stack, once
+every layer of it is up — fires a short confetti burst over the window, under
+two seconds and click-through. It fires only when that press actually opened
+something, so re-publishing an already-open stack stays quiet. Turn it off under
+**Settings → Celebration → Confetti on publish**; the choice is remembered on
+this machine and is not written to `.chief/config.yaml`.
+
 Loop reads and writes the same `.chief/` directory as the chief TUI, so you can
 switch between the two on the same project.
 

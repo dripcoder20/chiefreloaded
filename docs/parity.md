@@ -55,7 +55,7 @@ Legend: **done** · **partial** · **todo** · **n/a** (deliberately not ported)
 | Help overlay | `help.go` | partial | Key hints in the status bar; no palette or overlay. |
 | Branch-safety dialog | `branch_warning.go` | done | Rendered from the `Question` the session emits. |
 | Worktree progress | `worktree_spinner.go` | partial | Steps are emitted; no dedicated progress UI. |
-| Completion screen | `completion.go` | todo | Including the confetti, which should be one short burst rather than continuous. |
+| Completion screen | `completion.go` | todo | Its confetti is built, and is one short burst rather than continuous — but it fires on publishing a pull request or a stack, not on a summary screen there is no view for yet. |
 | Quit confirmation | `quit_confirm.go` | todo | |
 | First-run wizard | `first_time_setup.go` | todo | An empty state points at `chief new`. |
 | PRD authoring (`new`/`edit`) | `cmd/new.go`, `edit.go` | done | Embedded PTY pane. Exceeds chief: the prompt is editable per project. |
