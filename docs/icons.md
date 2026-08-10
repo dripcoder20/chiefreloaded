@@ -1,5 +1,112 @@
 # Icons
 
+How to change Loop's app icon without reverse-engineering the Taskfiles.
+
+## Sources and generated files
+
+Two files are **sources** — hand-maintained, and the only things you edit to
+change the icon:
+
+| Source | What it feeds |
+|---|---|
+| `build/appicon.png` | 1024×1024 RGBA. The raster source for `icons.icns`, `icon.ico`, and Linux |
+| `build/appicon.icon/` | Apple Icon Composer bundle (`icon.json` + `Assets/`). The source for `Assets.car` |
+
+`build/appicon-source.png` is the 1254×1254 original the 1024×1024 `appicon.png`
+was downscaled from. It is the higher-fidelity master: start from it, not from
+`appicon.png`, whenever a larger raster is needed (the DMG file icon does exactly
+that).
+
+Everything below is **generated** and committed:
+
+| Generated file | Produced by | Consumed by |
+|---|---|---|
+| `build/darwin/icons.icns` | `task common:generate:icons` | macOS bundle, DMG volume icon |
+| `build/darwin/Assets.car` | `task common:generate:icons` (macOS host only) | macOS 26+ bundle |
+| `build/windows/icon.ico` | `task common:generate:icons` | Windows `.syso` resource |
+
+Linux generates nothing — `build/linux/nfpm/nfpm.yaml` and `create:appimage` in
+`build/linux/Taskfile.yml` copy `build/appicon.png` directly.
+
+### Changing the icon
+
+```bash
+# 1. New artwork in, at exactly 1024x1024 with alpha
+sips -s format png -z 1024 1024 new-artwork.png --out build/appicon.png
+
+# 2. Point the Icon Composer bundle at the same artwork — see the warning below
+#    (drop the asset into build/appicon.icon/Assets/ and update icon.json's
+#    "image-name" / "name" keys to match)
+
+# 3. Regenerate the three derived formats
+task common:generate:icons
+
+# 4. Update the DMG assets by hand — see "macOS DMG assets" below
+```
+
+`generate:icons` uses Task's `sources:`/`generates:` fingerprinting, so a
+regeneration can appear to be a no-op. Force it with
+`task --force common:generate:icons` rather than editing the task definition.
+
+### The generated files are committed to git
+
+`build/darwin/icons.icns`, `build/darwin/Assets.car` and
+`build/windows/icon.ico` are tracked, not build outputs ignored by git. **Any
+regeneration has to be committed**, or the build ships the previous artwork. The
+one exception is `Assets.car`'s harmless per-build churn — see
+[`Assets.car` is not byte-reproducible](#assetscar-is-not-byte-reproducible).
+
+### `Assets.car` requires a macOS host
+
+`wails3 generate icons` only honours its `-iconcomposerinput` / `-macassetdir`
+flags on macOS; on Linux or Windows it silently skips them and leaves the
+committed `Assets.car` untouched. It shells out to Apple's `actool`, which does
+not exist elsewhere. **Icon changes must therefore be made on a macOS host** — on
+any other platform `Assets.car` keeps whatever artwork it already had, and the
+run still exits 0.
+
+## Warning: `appicon.icon/` and `appicon.png` must change together
+
+They are two independent sources for the same icon, and **macOS 26+ prefers
+`Assets.car` over `icons.icns`**. Updating `build/appicon.png` alone regenerates
+the `.icns` and the `.ico` but leaves `build/appicon.icon/` pointing at the old
+asset — so a macOS 26+ dock and Finder keep drawing the *old* icon while
+Windows, Linux, and older macOS show the new one. That split is the single
+easiest mistake to make here.
+
+Verify the bundle really was recompiled from the asset you expect:
+
+```bash
+assetutil --info build/darwin/Assets.car
+```
+
+Look for the `appicon_Assets/<layer-name>` entry and its `RenditionName`
+(`image.svg` vs a `.png`) to see which asset was compiled. Note the JSON escapes
+the slash (`appicon_Assets\/…`), so grep the bare layer name.
+
+## The Icon Composer asset is a raster-backed SVG
+
+`build/appicon.icon/Assets/chiefloop_app_icon.svg` is **not a true vector.** It
+is a single `<image href="data:image/png;base64,…">` — a 1254 px raster wrapped
+in an SVG at a 1254 viewBox. `actool` rasterises it correctly, so it works today,
+but it carries a raster's limits: it is no sharper than
+`build/appicon-source.png`, and it will look soft rather than crisp if Apple's
+icon sizes grow beyond it.
+
+The upgrade path is genuine vector artwork. The migration is two steps: drop
+`loop_icon.svg` into `build/appicon.icon/Assets/` and change `icon.json`'s
+`image-name` / `name` keys to match. Nothing else in the pipeline cares.
+
+Two `icon.json` settings are deliberately tuned for this artwork and should stay
+that way for any full-colour, full-bleed replacement:
+
+- **No `fill-specializations` on the layer.** They pin the dark and tinted
+  appearances to a solid colour, which flattens colour art into a silhouette.
+  They were right for the monochrome Wails mark and wrong here.
+- **`position.scale` is `1.0`, not the stock `0.85`.** The artwork carries its own
+  rounded-square background. At `0.85` the group's white gradient `fill` shows
+  through the artwork's transparent corners as a pale rim inside the squircle.
+
 ## macOS DMG assets
 
 Three files style the `.dmg` produced by `task darwin:package:dmg`. They are

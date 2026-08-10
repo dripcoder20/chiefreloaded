@@ -55,6 +55,8 @@ Run `task --list` for everything else.
   which fields each agent CLI actually reports.
 - [docs/parity.md](docs/parity.md) — feature checklist against the chief TUI.
 - [docs/design.md](docs/design.md) — why the code is shaped the way it is.
+- [docs/icons.md](docs/icons.md) — which icon files are sources, which are
+  generated, and how to change the app icon.
 
 ## Security note
 

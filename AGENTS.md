@@ -136,6 +136,8 @@ produces tests that pass while the product is broken.
 - **`docs/design.md`** — the original design document. Explains *why*, including
   findings about upstream chief that are still load-bearing. Predates the code.
 - **`docs/parity.md`** — feature checklist against the chief TUI.
+- **`docs/icons.md`** — icon sources vs. generated files, and why
+  `build/appicon.icon/` must change alongside `build/appicon.png`.
 - **`internal/chief/UPSTREAM.md`** — vendoring mechanics.
 
 Comments in this codebase explain *why*, not *what*. When you change something
