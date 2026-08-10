@@ -188,8 +188,17 @@ func (p *PRDService) Publish(req session.PublishRequest) (session.PublishReport,
 // PublishStack pushes each story branch from the bottom of the stack upwards and
 // opens a pull request for each. Reports per story, because a stack can partly
 // fail in a way one verdict cannot express.
+//
+// A failure that got far enough to have a per-story report is handed over as that
+// report, with StackReport.Failed saying what went wrong, rather than as an error.
+// A rejected Wails call reaches the interface as a sentence and nothing else, and
+// which pull requests now exist is precisely what the user needs before retrying.
 func (p *PRDService) PublishStack(req session.PublishRequest) (session.StackReport, error) {
-	return p.s.PublishStack(context.Background(), req)
+	report, err := p.s.PublishStack(context.Background(), req)
+	if err != nil && len(report.Stories) > 0 {
+		return report, nil
+	}
+	return report, err
 }
 
 // AgentDefaults reports the resolved per-phase agent defaults.

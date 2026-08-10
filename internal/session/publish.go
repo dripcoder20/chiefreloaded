@@ -338,8 +338,16 @@ func (s *Session) submitPullRequest(ctx context.Context, plan pullRequestPlan, d
 	report.PR = &ref
 	// Recorded before the event, so the link survives the process that opened it.
 	_ = s.recordPullRequest(plan.prd, plan.branch, ref)
-	s.publishSuccess(target, ref, report.Updated)
+	s.publishSuccess(target, ref, publishedVerb(report.Updated))
 	return report, nil
+}
+
+// publishedVerb is what publishing one pull request did.
+func publishedVerb(updated bool) string {
+	if updated {
+		return "updated"
+	}
+	return "opened"
 }
 
 // publishTarget is what a publishing event is about: one branch of one PRD, and
@@ -381,14 +389,14 @@ func (s *Session) publishStep(t publishTarget, op, text string) {
 
 // publishSuccess reports the pull request with its link, and tells the interface
 // the PRD has changed so the link is picked up everywhere it is shown.
-func (s *Session) publishSuccess(t publishTarget, ref PRRef, updated bool) {
-	verb := "opened"
-	if updated {
-		verb = "updated"
-	}
+//
+// The verb is what publishing did — opened it, updated it, or found it already
+// open. "Already open" is a success: a retry that reports the pull request a
+// previous attempt created has done exactly what was wanted.
+func (s *Session) publishSuccess(t publishTarget, ref PRRef, verb string) {
 	s.publish(Event{
 		Kind: EvGit, PRD: t.prd, StoryID: t.storyID,
-		Text: fmt.Sprintf("%s pull request #%d for %s", verb, ref.Number, t.branch),
+		Text: fmt.Sprintf("pull request #%d for %s was %s", ref.Number, t.branch, verb),
 		Git: &GitEvent{
 			Op: "pr-create", Branch: t.branch, BaseBranch: t.base,
 			PRNumber: ref.Number, PRURL: ref.URL, State: "ok",

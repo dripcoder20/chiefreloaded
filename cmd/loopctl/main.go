@@ -504,7 +504,11 @@ func printStackReport(report session.StackReport) error {
 }
 
 // storyOutcome is what happened to one story, in the words that distinguish the
-// four cases: opened, updated, deliberately skipped, and failed.
+// four cases: opened, already open, deliberately skipped, and failed.
+//
+// "Already open" is what makes a retry readable. A story a previous pass created
+// a pull request for is left alone, and saying "opened" for it would claim this
+// pass did work it did not do.
 func storyOutcome(story session.StoryPublish) string {
 	if story.Error != "" {
 		return "failed: " + story.Error
@@ -515,12 +519,12 @@ func storyOutcome(story session.StoryPublish) string {
 	if story.PR == nil {
 		return "no pull request"
 	}
-	return fmt.Sprintf("%s #%d %s", publishVerb(story.Updated), story.PR.Number, story.PR.URL)
+	return fmt.Sprintf("%s #%d %s", storyVerb(story.AlreadyOpen), story.PR.Number, story.PR.URL)
 }
 
-func publishVerb(updated bool) string {
-	if updated {
-		return "updated"
+func storyVerb(alreadyOpen bool) string {
+	if alreadyOpen {
+		return "already open"
 	}
 	return "opened"
 }

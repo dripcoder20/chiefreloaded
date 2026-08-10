@@ -17,6 +17,9 @@ package session
 //   - A story that committed nothing has a branch at the same commit as the one
 //     below it. It contributes no pull request, and the story above is based on
 //     the nearest branch below that does have one.
+//   - Publishing again is a retry, not a second pass. Every layer is asked what
+//     it already has before anything is pushed, so a stack that failed half way
+//     is finished by publishing it again rather than by unpicking what exists.
 
 import (
 	"context"
@@ -36,6 +39,12 @@ import (
 type StackReport struct {
 	PRD     string         `json:"prd"`
 	Stories []StoryPublish `json:"stories,omitempty"`
+	// Failed is why the pass stopped before it reached the top, empty when it did
+	// not stop. It rides on the report rather than only being returned as an
+	// error, because a call that merely rejects arrives at the interface as a
+	// sentence with no per-story outcome attached — and which pull requests exist
+	// is the thing a partial failure most has to say.
+	Failed string `json:"failed,omitempty"`
 }
 
 // StoryPublish is what publishing did about one story.
@@ -44,9 +53,13 @@ type StoryPublish struct {
 	Branch  string `json:"branch,omitempty"`
 	// Base is the branch this pull request was actually opened against, which is
 	// not always the one below it in the record — see Rebased.
-	Base    string `json:"base,omitempty"`
-	PR      *PRRef `json:"pr,omitempty"`
-	Updated bool   `json:"updated,omitempty"`
+	Base string `json:"base,omitempty"`
+	PR   *PRRef `json:"pr,omitempty"`
+	// AlreadyOpen reports that this story's pull request was open before this
+	// attempt, so nothing was pushed and nothing was created for it. That is what
+	// makes publishing again a retry: it adds what is missing and reports what is
+	// already there rather than opening a second pull request for the same branch.
+	AlreadyOpen bool `json:"alreadyOpen,omitempty"`
 	// Skipped is why this story contributes no pull request. Empty when it does.
 	Skipped string `json:"skipped,omitempty"`
 	// Error is why this story's pull request could not be opened.
@@ -207,6 +220,10 @@ func anyPublishable(layers []stackLayer) bool {
 }
 
 // submitStack publishes the layers from the bottom upwards.
+//
+// A layer that fails stops the ones above it, and every story keeps its own entry
+// in the report either way — created, skipped, failed, or blocked by the failure
+// below. Which of those it is, is what tells the user what a retry has left to do.
 func (s *Session) submitStack(ctx context.Context, plan stackPlan) (StackReport, error) {
 	report := StackReport{PRD: plan.prd}
 	var failed error
@@ -223,6 +240,9 @@ func (s *Session) submitStack(ctx context.Context, plan stackPlan) (StackReport,
 		entry, err := s.submitLayer(ctx, plan, layer)
 		report.Stories = append(report.Stories, entry)
 		failed = err
+	}
+	if failed != nil {
+		report.Failed = failed.Error()
 	}
 	return report, failed
 }
@@ -242,25 +262,58 @@ func (l stackLayer) notPublished(reason string) StoryPublish {
 	return StoryPublish{StoryID: l.storyID, Branch: l.branch, Skipped: reason}
 }
 
-// submitLayer pushes one story's branch and opens or updates its pull request.
+// submitLayer publishes one story's branch, unless its pull request is already
+// open.
+//
+// What exists is asked for before anything is pushed. That is what makes a second
+// press a retry rather than a second pass: the stories that failed are attempted,
+// the ones that succeeded are reported back unchanged, and no branch can end up
+// with two pull requests.
+func (s *Session) submitLayer(ctx context.Context, plan stackPlan, layer stackLayer) (StoryPublish, error) {
+	existing, found, _ := ghstack.Manual{}.Find(ctx, plan.root, layer.branch)
+	if found && existing.State == "OPEN" {
+		return s.reportOpenLayer(plan, layer, existing), nil
+	}
+	return s.openLayer(ctx, plan, layer)
+}
+
+// reportOpenLayer reports the pull request a previous attempt opened, without
+// pushing or creating anything.
+//
+// The base is the one GitHub holds rather than the one this pass would have
+// chosen: that is what the pull request is actually against, and a retry that
+// reported the intended base would describe a stack nobody can see.
+func (s *Session) reportOpenLayer(plan stackPlan, layer stackLayer, existing ghstack.PR) StoryPublish {
+	base := existing.Base
+	if base == "" {
+		base = layer.base
+	}
+	ref := prRefFrom(existing, s.now().UnixMilli())
+	// Re-recorded so a retry refreshes the link and its state even when it creates
+	// nothing — the sidecar is what the story rows render from.
+	_ = s.recordPullRequest(plan.prd, layer.branch, ref)
+
+	target := publishTarget{prd: plan.prd, storyID: layer.storyID, branch: layer.branch, base: base}
+	s.publishSuccess(target, ref, "already open")
+	return StoryPublish{
+		StoryID: layer.storyID, Branch: layer.branch, Base: base,
+		PR: &ref, AlreadyOpen: true,
+	}
+}
+
+// openLayer pushes one story's branch and opens its pull request.
 //
 // ghstack.Manual rather than whatever ghstack.Select returns, for the same reason
 // as a single pull request: `gh stack submit` publishes every branch in one
-// invocation and reports one outcome, which cannot say which story failed. Manual
-// pushes one head, and its Find-before-create is what makes a second attempt an
-// update rather than a duplicate.
-func (s *Session) submitLayer(ctx context.Context, plan stackPlan, layer stackLayer) (StoryPublish, error) {
-	driver := ghstack.Manual{}
+// invocation and reports one outcome, which cannot say which story failed.
+func (s *Session) openLayer(ctx context.Context, plan stackPlan, layer stackLayer) (StoryPublish, error) {
 	base, rebased := resolveRemoteBase(ctx, plan.root, layer.base, plan.trunk)
 	entry := StoryPublish{StoryID: layer.storyID, Branch: layer.branch, Base: base, Rebased: rebased}
 	target := publishTarget{prd: plan.prd, storyID: layer.storyID, branch: layer.branch, base: base}
 
 	s.publishStep(target, "push", fmt.Sprintf("pushing %s to origin", layer.branch))
-	existing, found, _ := driver.Find(ctx, plan.root, layer.branch)
-	entry.Updated = found && existing.State == "OPEN"
-
-	s.publishStep(target, "pr-create", publishingNote(entry.Updated, base))
-	pr, err := driver.Submit(ctx, ghstack.Spec{
+	s.publishStep(target, "pr-create", "opening a pull request against "+base)
+	pr, err := ghstack.Manual{}.Submit(ctx, ghstack.Spec{
 		Dir: plan.root, Head: layer.branch, Base: base,
 		Title: layer.title, Body: layer.body, Draft: plan.draft,
 	})
@@ -275,6 +328,6 @@ func (s *Session) submitLayer(ctx context.Context, plan stackPlan, layer stackLa
 	// Recorded as it is created, so a failure above it leaves this link on disk
 	// rather than only in a report the process may not outlive.
 	_ = s.recordPullRequest(plan.prd, layer.branch, ref)
-	s.publishSuccess(target, ref, entry.Updated)
+	s.publishSuccess(target, ref, "opened")
 	return entry, nil
 }

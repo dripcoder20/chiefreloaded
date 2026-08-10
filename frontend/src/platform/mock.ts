@@ -141,6 +141,11 @@ let mockWorkflow = {
 // it would really be.
 let mockPublished = false;
 
+// Whether the mocked stack has been published once, so the second press shows the
+// retry: the failure is gone, the pull request that already exists is reported
+// rather than opened again, and the story that was blocked by it gets its own.
+let mockStackPublished = false;
+
 /** One story's place in the mocked stack report. */
 function mockStoryPublish(story: {
   storyId: string;
@@ -148,12 +153,14 @@ function mockStoryPublish(story: {
   base: string;
   number: number;
   draft: boolean;
+  alreadyOpen?: boolean;
 }) {
   const { storyId, branch, base, number, draft } = story;
   return {
     storyId,
     branch,
     base,
+    alreadyOpen: story.alreadyOpen ?? false,
     pr: {
       number,
       url: `https://github.com/acme/checkout/pull/${number}`,
@@ -788,21 +795,47 @@ export const mockApi = {
         },
       } as never;
     },
-    // A stack the browser build can look at: two stories with a pull request and
-    // one that committed nothing, which is the case the report exists to show.
+    // A stack the browser build can look at, in both of its interesting states:
+    // the first press fails at the top story, and pressing again is the retry that
+    // finishes it without opening a second pull request for the story that already
+    // has one. US-002 committed nothing either way.
     publishStack: async (req: { prd: string; draft: boolean }) => {
       emit({ kind: EventKind.EvGit, prd: req.prd, text: "pushing loop/checkout/us-001 to origin" });
+      const first = mockStoryPublish({
+        storyId: "US-001",
+        branch: "loop/checkout/us-001",
+        base: "main",
+        number: 128,
+        draft: req.draft,
+        alreadyOpen: mockStackPublished,
+      });
+      const empty = {
+        storyId: "US-002",
+        branch: "loop/checkout/us-002",
+        skipped: "the story produced no commit",
+      };
+      if (!mockStackPublished) {
+        mockStackPublished = true;
+        return {
+          prd: req.prd,
+          failed: "US-003: gh pr create: could not reach github.com",
+          stories: [
+            first,
+            empty,
+            {
+              storyId: "US-003",
+              branch: "loop/checkout/us-003",
+              base: "loop/checkout/us-001",
+              error: "gh pr create: could not reach github.com",
+            },
+          ],
+        } as never;
+      }
       return {
         prd: req.prd,
         stories: [
-          mockStoryPublish({
-            storyId: "US-001",
-            branch: "loop/checkout/us-001",
-            base: "main",
-            number: 128,
-            draft: req.draft,
-          }),
-          { storyId: "US-002", branch: "loop/checkout/us-002", skipped: "the story produced no commit" },
+          first,
+          empty,
           mockStoryPublish({
             storyId: "US-003",
             branch: "loop/checkout/us-003",

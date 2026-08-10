@@ -399,15 +399,17 @@ func creations(t *testing.T, state string) []string {
 type stackJSON struct {
 	PRD     string `json:"prd"`
 	Stories []struct {
-		StoryID string `json:"storyId"`
-		Branch  string `json:"branch"`
-		Base    string `json:"base"`
-		Skipped string `json:"skipped"`
-		PR      *struct {
+		StoryID     string `json:"storyId"`
+		Branch      string `json:"branch"`
+		Base        string `json:"base"`
+		Skipped     string `json:"skipped"`
+		AlreadyOpen bool   `json:"alreadyOpen"`
+		PR          *struct {
 			Number int    `json:"number"`
 			URL    string `json:"url"`
 		} `json:"pr"`
 	} `json:"stories"`
+	Failed string `json:"failed"`
 }
 
 // A run that gave each story its own branch publishes as a stack: three pull
@@ -446,10 +448,23 @@ func TestPublishingAPerStoryPRDOpensAStackFromAnotherProcess(t *testing.T) {
 		t.Errorf("the remote holds %v, want one branch per story", refs)
 	}
 
-	// A second pass updates what exists rather than opening three more.
-	publishStack(t, root)
+	// A second pass has nothing left to do. It reports the same three pull requests
+	// rather than opening three more, and says of each that it was already open.
+	again := publishStack(t, root)
 	if created := creations(t, gh); len(created) != 3 {
 		t.Errorf("gh pr create ran %d time(s) over two passes: %v", len(created), created)
+	}
+	if again.Failed != "" {
+		t.Errorf("failed = %q, want a retry with nothing to do to report no failure", again.Failed)
+	}
+	for i, story := range again.Stories {
+		if !story.AlreadyOpen {
+			t.Errorf("%s = %+v, want it reported as already open", story.StoryID, story)
+		}
+		if story.PR == nil || story.PR.Number != got.Stories[i].PR.Number {
+			t.Errorf("%s = %+v, want the same pull request as %+v",
+				story.StoryID, story.PR, got.Stories[i].PR)
+		}
 	}
 }
 
