@@ -288,6 +288,104 @@ describe("publishing a stack", () => {
     expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
   });
 
+  it("celebrates a stack in which every layer landed", async () => {
+    await publishStack(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  // Three pull requests out of four is the case confetti would misrepresent.
+  it("does not celebrate a stack that failed half way, however much of it landed", async () => {
+    backend.publishStack.mockResolvedValue({
+      prd: "checkout",
+      failed: "US-002: gh pr create: could not reach github.com",
+      stories: [
+        STACK_REPORT.stories[0],
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          error: "gh pr create: could not reach github.com",
+        },
+      ],
+    });
+
+    await publishStack(false);
+
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The whole point of the transition rule: the failed press is silent, the retry
+  // that finishes the stack celebrates, and pressing again after that is silent
+  // because there is nothing new to celebrate.
+  it("celebrates exactly once across a failure, a retry, and a redundant press", async () => {
+    const failedFirstPass = {
+      prd: "checkout",
+      failed: "US-002: gh pr create: could not reach github.com",
+      stories: [
+        STACK_REPORT.stories[0],
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          error: "gh pr create: could not reach github.com",
+        },
+      ],
+    };
+    const completedRetry = {
+      prd: "checkout",
+      stories: [
+        { ...STACK_REPORT.stories[0], alreadyOpen: true },
+        {
+          storyId: "US-002",
+          branch: "loop/checkout/us-002",
+          pr: { number: 129, url: "https://github.com/acme/checkout/pull/129", state: "OPEN" },
+        },
+      ],
+    };
+    const nothingLeftToDo = {
+      prd: "checkout",
+      stories: completedRetry.stories.map((story) => ({ ...story, alreadyOpen: true })),
+    };
+
+    backend.publishStack.mockResolvedValueOnce(failedFirstPass);
+    await publishStack(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+
+    backend.publishStack.mockResolvedValueOnce(completedRetry);
+    await publishStack(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+
+    backend.publishStack.mockResolvedValueOnce(nothingLeftToDo);
+    await publishStack(false);
+    expect(fireConfetti).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not celebrate a stack while the preference is off", async () => {
+    celebration.isCelebrationEnabled = false;
+    await publishStack(false);
+
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  // The kept report is state, read again on every redraw; only the press may celebrate.
+  it("does not celebrate again when the kept stack report is read again", async () => {
+    await publishStack(false);
+    fireConfetti.mockClear();
+
+    const kept = app.publishedStack;
+    app.publishedStack = kept;
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+    expect(app.publishedStack?.stories?.[0]?.pr?.number).toBe(128);
+
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
+  it("does not celebrate when the stacked publish is refused outright", async () => {
+    backend.publishStack.mockRejectedValue(new Error("there is no stack to publish"));
+    await publishStack(false);
+    expect(fireConfetti).not.toHaveBeenCalled();
+  });
+
   it("reports a refusal rather than pretending a stack was published", async () => {
     backend.publishStack.mockRejectedValue(
       new Error("this run put every story on one branch, so there is no stack to publish"),

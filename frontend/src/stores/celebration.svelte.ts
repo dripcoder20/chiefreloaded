@@ -17,6 +17,7 @@
  */
 
 import { fireConfetti } from "../lib/confetti";
+import type { StackReport, StoryPublish } from "../platform";
 
 /** The single key this preference occupies, namespaced as LogPanel's is. */
 export const STORAGE_KEY = "loop.celebrateOnPublish";
@@ -85,4 +86,36 @@ export function toggleCelebration(): void {
 export function celebratePublish(): void {
   if (!celebration.isCelebrationEnabled) return;
   fireConfetti();
+}
+
+/**
+ * Celebrate a stack that has just become fully published.
+ *
+ * "Fully" is the point: a stack fails in layers, and three pull requests out of
+ * four is the case confetti would misrepresent. So a single failure anywhere —
+ * the report's own `failed`, or an entry that could not be opened — cancels the
+ * celebration even though most of the stack landed.
+ *
+ * A story that contributes no pull request because it committed nothing is not a
+ * failure and does not cancel it. That story published everything it had.
+ */
+export function celebrateStackPublish(report: StackReport): void {
+  if (report.failed) return;
+  const stories = report.stories ?? [];
+  if (stories.some(hasFailed)) return;
+  // Nothing newly opened means this pass changed nothing — the stack was already
+  // complete before it, and the confetti for that fired then. This is what makes
+  // "once, when the stack first becomes complete" hold across retries: the retry
+  // that opens the last missing pull request celebrates, and pressing publish
+  // again afterwards has nothing left to celebrate.
+  if (!stories.some(wasJustOpened)) return;
+  celebratePublish();
+}
+
+function hasFailed(story: StoryPublish): boolean {
+  return Boolean(story.error);
+}
+
+function wasJustOpened(story: StoryPublish): boolean {
+  return Boolean(story.pr) && story.alreadyOpen !== true;
 }

@@ -25,7 +25,7 @@ import {
   type RunSnapshot,
 } from "../platform";
 import { ingest } from "./logs.svelte";
-import { celebratePublish } from "./celebration.svelte";
+import { celebratePublish, celebrateStackPublish } from "./celebration.svelte";
 import { errorMessage } from "./errors";
 
 /**
@@ -823,6 +823,7 @@ export async function publishStack(draft: boolean): Promise<void> {
     const report = await api.prd.publishStack({ prd, draft } as never);
     app.publishedStack = report;
     app.error = report.failed || null;
+    celebrateStackPublish(report);
   } catch (err) {
     app.error = errorMessage(err);
   } finally {
