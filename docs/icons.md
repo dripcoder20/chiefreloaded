@@ -12,10 +12,11 @@ change the icon:
 | `build/appicon.png` | 1024×1024 RGBA. The raster source for `icons.icns`, `icon.ico`, and Linux |
 | `build/appicon.icon/` | Apple Icon Composer bundle (`icon.json` + `Assets/`). The source for `Assets.car` |
 
-`build/appicon-source.png` is the 1254×1254 original the 1024×1024 `appicon.png`
-was downscaled from. It is the higher-fidelity master: start from it, not from
-`appicon.png`, whenever a larger raster is needed (the DMG file icon does exactly
-that).
+`build/appicon-source.png` is the original master the `appicon.png` was made
+from. The current artwork was delivered at exactly 1024×1024, so today the two
+files are identical — but start from `appicon-source.png`, not `appicon.png`,
+whenever another raster is needed (the DMG file icon does exactly that), so the
+distinction survives a future higher-resolution master.
 
 Everything below is **generated** and committed:
 
@@ -84,18 +85,22 @@ Look for the `appicon_Assets/<layer-name>` entry and its `RenditionName`
 (`image.svg` vs a `.png`) to see which asset was compiled. Note the JSON escapes
 the slash (`appicon_Assets\/…`), so grep the bare layer name.
 
-## The Icon Composer asset is a raster-backed SVG
+## The Icon Composer asset is a full-bleed crop, not the master
 
-`build/appicon.icon/Assets/chiefloop_app_icon.svg` is **not a true vector.** It
-is a single `<image href="data:image/png;base64,…">` — a 1254 px raster wrapped
-in an SVG at a 1254 viewBox. `actool` rasterises it correctly, so it works today,
-but it carries a raster's limits: it is no sharper than
-`build/appicon-source.png`, and it will look soft rather than crisp if Apple's
-icon sizes grow beyond it.
+`build/appicon.icon/Assets/chiefloop_app_icon_macos.png` is **not a copy of
+`appicon.png`.** The master artwork is a macOS-style tile — a rounded square
+with transparent margins baked in — which is exactly what the `.icns` and
+`.ico` ladders want. Icon Composer, though, applies the system squircle mask
+itself: feed it the master and macOS 26+ draws a tile inside a tile, with the
+group's gradient fill showing around the shrunken artwork. So the asset is the
+master's tile cropped to its alpha bounding box and scaled back up to
+1024×1024, making it full-bleed on the canvas.
 
-The upgrade path is genuine vector artwork. The migration is two steps: drop
-`loop_icon.svg` into `build/appicon.icon/Assets/` and change `icon.json`'s
-`image-name` / `name` keys to match. Nothing else in the pipeline cares.
+For new artwork, measure the tile's alpha bounds and center-crop before
+resizing (the current tile spanned 100–924 px, hence `sips -c 824 824` then
+`-z 1024 1024`). The upgrade path is genuine vector artwork: drop the SVG into
+`build/appicon.icon/Assets/` and change `icon.json`'s `image-name` / `name`
+keys to match. Nothing else in the pipeline cares.
 
 Two `icon.json` settings are deliberately tuned for this artwork and should stay
 that way for any full-colour, full-bleed replacement:
@@ -118,7 +123,7 @@ be updated by hand.
 
 | File | Role | Source |
 |---|---|---|
-| `build/darwin/dmg-file-icon.png` | Master raster for the `.dmg` file icon | Copy of `build/appicon-source.png` (1254×1254) |
+| `build/darwin/dmg-file-icon.png` | Master raster for the `.dmg` file icon | Copy of `build/appicon-source.png` |
 | `build/darwin/dmg-file-icon.icns` | What `--file-icon` actually consumes | Generated from the PNG above |
 | `build/darwin/dmg-background.png` | Finder window backdrop, 540×380 | Hand-authored; must stay 540×380 RGB to match `DMG_WINDOW_WIDTH`/`HEIGHT` |
 
@@ -126,9 +131,8 @@ The volume icon reuses `build/darwin/icons.icns`, so it needs no separate step.
 
 ### Regenerating `dmg-file-icon.icns`
 
-`dmg-file-icon.png` is a size-exact swap — it is 1254×1254, the same dimensions
-as `build/appicon-source.png`, so the master artwork is copied in without
-resizing:
+`dmg-file-icon.png` is a straight copy of the master — the iconset ladder below
+does all the resizing, so the copy needs no size adjustment:
 
 ```bash
 cp build/appicon-source.png build/darwin/dmg-file-icon.png
